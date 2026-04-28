@@ -1,0 +1,10 @@
+[gd_scene format=3 uid="uid://d4nrn8mawpteg"]
+
+[ext_resource type="PackedScene" uid="uid://jjvu62dm0bvn" path="res://packed-scenes/button.tscn" id="1_ysw5r"]
+
+[node name="Node4" type="Control" unique_id=532966807]
+layout_mode = 3
+anchors_preset = 0
+
+[node name="Button" parent="." unique_id=723804091 instance=ExtResource("1_ysw5r")]
+layout_mode = 0
