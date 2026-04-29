@@ -99,7 +99,7 @@ Ziel: Lauffähige, leere `Main`-Szene mit `Main.cs` und allen Override-Methoden.
 - Create: `scripts/Hud/`
 - Create: `scripts/Views/`
 
-- [x] **Step 1: Verzeichnisse anlegen**
+- [ ] **Step 1: Verzeichnisse anlegen**
 
 PowerShell:
 
@@ -107,7 +107,7 @@ PowerShell:
 New-Item -ItemType Directory -Force -Path scenes, scripts\Maze, scripts\Generators, scripts\Solvers, scripts\Hud, scripts\Views | Out-Null
 ```
 
-- [x] **Step 2: Verifizieren**
+- [ ] **Step 2: Verifizieren**
 
 ```powershell
 Get-ChildItem -Recurse -Directory | Select-Object -ExpandProperty FullName
@@ -123,7 +123,7 @@ Erwartet: Alle sechs Unterordner vorhanden.
 - Create: `scenes/Main.tscn`
 - Modify: `project.godot` (`[application] run/main_scene` Eintrag)
 
-- [x] **Step 1: `scenes/Main.tscn` per Texteditor anlegen**
+- [ ] **Step 1: `scenes/Main.tscn` per Texteditor anlegen**
 
 Godot speichert Szenen als reine Textdateien. Wir können diese Datei direkt anlegen, ohne den Editor zu starten. Die `[ext_resource]`-Zeile auf `Main.cs` setzt eine vorgemerkte Referenz — die Datei selbst tippen wir gleich in Task 0.3.
 
@@ -138,7 +138,7 @@ script = ExtResource("1_main")
 
 > Hinweis: `uid` darf jeder eindeutige Bezeichner sein. Godot ersetzt ihn beim ersten Speichern ohnehin durch eine generierte UID, die String-Form `uid://...` ist erlaubt.
 
-- [x] **Step 2: `project.godot` um Hauptszene erweitern**
+- [ ] **Step 2: `project.godot` um Hauptszene erweitern**
 
 Vor dem Block `[dotnet]` einfügen (oder `[application]` ergänzen):
 
@@ -158,7 +158,7 @@ run/main_scene="res://scenes/Main.tscn"
 **Files:**
 - Create: `scripts/Main.cs`
 
-- [x] **Step 1: `Main.cs` schreiben**
+- [ ] **Step 1: `Main.cs` schreiben**
 
 ```csharp
 using Godot;
@@ -269,7 +269,7 @@ Ziel: Render-unabhängige Repräsentation eines rechteckigen Zellgitters mit Wä
 **Files:**
 - Create: `scripts/Maze/Direction.cs`
 
-- [x] **Step 1: Datei anlegen**
+- [ ] **Step 1: Datei anlegen**
 
 ```csharp
 namespace Maze.Model;
@@ -340,7 +340,7 @@ Erwartet: `Build succeeded`.
 **Files:**
 - Create: `scripts/Maze/CellState.cs`
 
-- [x] **Step 1: Datei anlegen**
+- [ ] **Step 1: Datei anlegen**
 
 ```csharp
 namespace Maze.Model;
@@ -376,7 +376,7 @@ public enum CellState
 **Files:**
 - Create: `scripts/Maze/Cell.cs`
 
-- [x] **Step 1: Datei anlegen**
+- [ ] **Step 1: Datei anlegen**
 
 ```csharp
 namespace Maze.Model;
@@ -1408,7 +1408,7 @@ public sealed class RecursiveBacktrackerGenerator : IMazeGenerator
 **Files:**
 - Modify: `scripts/Main.cs`
 
-- [x] **Step 1: Main vollständig erweitern**
+- [ ] **Step 1: Main vollständig erweitern**
 
 ```csharp
 using System;
@@ -1512,7 +1512,7 @@ public partial class Main : Node
 }
 ```
 
-- [x] **Step 2: Build & Smoketest**
+- [ ] **Step 2: Build & Smoketest**
 
 ```powershell
 & $env:GODOT4 --path $PWD --build-solutions
@@ -1533,7 +1533,7 @@ Ziel: Drei zusätzliche Erstellungsalgorithmen. Auswahl im HUD bleibt unverände
 **Files:**
 - Create: `scripts/Generators/GrowingTreeGenerator.cs`
 
-- [x] **Step 1: Datei anlegen**
+- [ ] **Step 1: Datei anlegen**
 
 ```csharp
 using System.Collections.Generic;
@@ -1606,7 +1606,7 @@ public sealed class GrowingTreeGenerator : IMazeGenerator
 }
 ```
 
-- [x] **Step 2: In Main registrieren**
+- [ ] **Step 2: In Main registrieren**
 
 In `scripts/Main.cs` das `_generators`-Dictionary erweitern:
 
@@ -1625,7 +1625,7 @@ private readonly Dictionary<string, IMazeGenerator> _generators = new()
 **Files:**
 - Create: `scripts/Generators/RecursiveDivisionGenerator.cs`
 
-- [x] **Step 1: Datei anlegen**
+- [ ] **Step 1: Datei anlegen**
 
 ```csharp
 using System.Collections.Generic;
@@ -1715,7 +1715,7 @@ public sealed class RecursiveDivisionGenerator : IMazeGenerator
 }
 ```
 
-- [x] **Step 2: Registrieren**
+- [ ] **Step 2: Registrieren**
 
 ```csharp
 private readonly Dictionary<string, IMazeGenerator> _generators = new()
@@ -2033,7 +2033,7 @@ public sealed class CellularAutomataGenerator : IMazeGenerator
 >
 > **Vergleich mit den anderen Generatoren:** Recursive Backtracker erzeugt lange gewundene Gänge mit hohem River-Faktor; Growing Tree interpoliert je nach Strategie zwischen Backtracker- und Prim-Look; Recursive Division wirkt architektonisch. Der Parr-CA hat einen ganz eigenen Charakter: lange parallele Gänge, viele 90°-Abzweigungen, Spiralen — siehe Bilder im PDF auf Seite 32.
 
-- [x] **Step 2: Registrieren**
+- [ ] **Step 2: Registrieren**
 
 ```csharp
 private readonly Dictionary<string, IMazeGenerator> _generators = new()
@@ -2207,7 +2207,7 @@ shadow_enabled = true
 - Modify: `scenes/Main.tscn`
 - Modify: `scripts/Main.cs`
 
-- [x] **Step 1: `Main.tscn` um 3D-View erweitern**
+- [ ] **Step 1: `Main.tscn` um 3D-View erweitern**
 
 ```text
 [gd_scene load_steps=6 format=3 uid="uid://b0maze0main"]
@@ -2231,7 +2231,7 @@ script = ExtResource("4_runner")
 [node name="Hud" parent="." instance=ExtResource("2_hud")]
 ```
 
-- [x] **Step 2: `Main.cs` View-Toggle implementieren**
+- [ ] **Step 2: `Main.cs` View-Toggle implementieren**
 
 In `Main.cs`:
 
