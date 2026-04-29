@@ -26,8 +26,8 @@
 res://
 ├── icon.svg
 ├── project.godot
-├── maze123.csproj          (von Godot beim ersten C#-Skript erzeugt)
-├── maze123.sln
+├── maze-sascha.csproj          (von Godot beim ersten C#-Skript erzeugt)
+├── maze-sascha.sln
 ├── scenes/
 │   ├── Main.tscn               Root: Node, Script: Main.cs
 │   ├── Hud.tscn                Root: CanvasLayer, Script: Hud.cs
@@ -123,7 +123,7 @@ Erwartet: Alle sechs Unterordner vorhanden.
 - Create: `scenes/Main.tscn`
 - Modify: `project.godot` (`[application] run/main_scene` Eintrag)
 
-- [ ] **Step 1: `scenes/Main.tscn` per Texteditor anlegen**
+- [x] **Step 1: `scenes/Main.tscn` per Texteditor anlegen**
 
 Godot speichert Szenen als reine Textdateien. Wir können diese Datei direkt anlegen, ohne den Editor zu starten. Die `[ext_resource]`-Zeile auf `Main.cs` setzt eine vorgemerkte Referenz — die Datei selbst tippen wir gleich in Task 0.3.
 
@@ -138,14 +138,14 @@ script = ExtResource("1_main")
 
 > Hinweis: `uid` darf jeder eindeutige Bezeichner sein. Godot ersetzt ihn beim ersten Speichern ohnehin durch eine generierte UID, die String-Form `uid://...` ist erlaubt.
 
-- [ ] **Step 2: `project.godot` um Hauptszene erweitern**
+- [x] **Step 2: `project.godot` um Hauptszene erweitern**
 
 Vor dem Block `[dotnet]` einfügen (oder `[application]` ergänzen):
 
 ```ini
 [application]
 
-config/name="maze123"
+config/name="maze-sascha"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 run/main_scene="res://scenes/Main.tscn"
@@ -153,12 +153,12 @@ run/main_scene="res://scenes/Main.tscn"
 
 ### Task 0.3: Main.cs anlegen und C#-Projekt initialisieren
 
-> Beim ersten Mal muss der Godot-Editor einmal interaktiv gestartet werden: er entdeckt das `.cs`-Skript, fragt nach dem Anlegen der Solution und erzeugt dann `maze123.csproj` und `maze123.sln`. Erst danach funktionieren `dotnet build` und der Headless-Smoke. Die rein per CLI erreichbare Option `--build-solutions` reicht in Godot 4.6.2 dafür **nicht** aus.
+> Beim ersten Mal muss der Godot-Editor einmal interaktiv gestartet werden: er entdeckt das `.cs`-Skript, fragt nach dem Anlegen der Solution und erzeugt dann `maze-sascha.csproj` und `maze-sascha.sln`. Erst danach funktionieren `dotnet build` und der Headless-Smoke. Die rein per CLI erreichbare Option `--build-solutions` reicht in Godot 4.6.2 dafür **nicht** aus.
 
 **Files:**
 - Create: `scripts/Main.cs`
 
-- [ ] **Step 1: `Main.cs` schreiben**
+- [x] **Step 1: `Main.cs` schreiben**
 
 ```csharp
 using Godot;
@@ -202,20 +202,35 @@ public partial class Main : Node
 }
 ```
 
-- [ ] **Step 2: Godot-Editor einmal starten und C#-Projekt erzeugen lassen**
+- [ ] **Step 2: Godot-Editor starten**
 
 ```powershell
 & $env:GODOT4 --path $PWD --editor
 ```
 
-Im Editor:
-1. Falls Godot fragt, ob das C#-Projekt erzeugt werden soll → **Ja** wählen. Alternativ über Menü `Project → Tools → C# → Create C# solution`.
-2. Anschließend `Build → Build Project` (oder das Hammer-Symbol oben rechts) ausführen, damit Godot die generierten Marshalling-Quellen erzeugt.
-3. Editor schließen.
+> **Wichtig:** Godot 4.6.2 erzeugt `.csproj`/`.sln` **nicht** automatisch, nur weil eine `.cs`-Datei im Projekt liegt. Ein Auto-Dialog beim Start erscheint in dieser Version typischerweise auch nicht. Die Solution muss in Schritt 3 explizit über das Menü angestoßen werden.
 
-Erwartet: `maze123.csproj` und `maze123.sln` liegen jetzt im Projekt-Root, plus ein generierter Ordner `.godot/mono/`.
+- [ ] **Step 3: C#-Solution explizit über das Menü erzeugen**
 
-- [ ] **Step 3: Build prüfen**
+Im laufenden Editor:
+
+1. Menü öffnen: `Project` → `Tools` → `C#` → **`Create C# solution`** anklicken.
+   - Falls der Eintrag fehlt oder ausgegraut ist (z. B. weil Reste vorhanden sind), Workspace-Root prüfen — gibt es bereits `maze-sascha.csproj`? Wenn nicht, weiter mit dem Fallback in Step 5.
+2. Godot legt jetzt `maze-sascha.csproj` und `maze-sascha.sln` im Projekt-Root an.
+3. Anschließend `Build → Build Project` (oder das Hammer-Symbol oben rechts) ausführen, damit Godot die Marshalling-Quellen + die initiale Assembly erzeugt.
+4. Editor schließen.
+
+- [ ] **Step 4: Verifizieren, dass `.csproj` und `.sln` da sind**
+
+```powershell
+Get-ChildItem -Path $PWD -Filter "*.csproj"
+Get-ChildItem -Path $PWD -Filter "*.sln"
+```
+
+Erwartet: je ein Treffer (`maze-sascha.csproj`, `maze-sascha.sln`).
+
+
+- [ ] **Step 5: Build prüfen**
 
 ```powershell
 dotnet build
@@ -223,7 +238,7 @@ dotnet build
 
 Erwartet: `Build succeeded`. Keine Warnungen außer `CS8618` falls der Compiler über später initialisierte Felder meckert (kommt erst in späteren Tasks).
 
-- [ ] **Step 4: Headless-Smoke**
+- [ ] **Step 6: Headless-Smoke**
 
 ```powershell
 & $env:GODOT4 --headless --path $PWD --quit --verbose
@@ -254,7 +269,7 @@ Ziel: Render-unabhängige Repräsentation eines rechteckigen Zellgitters mit Wä
 **Files:**
 - Create: `scripts/Maze/Direction.cs`
 
-- [ ] **Step 1: Datei anlegen**
+- [x] **Step 1: Datei anlegen**
 
 ```csharp
 namespace Maze.Model;
@@ -325,7 +340,7 @@ Erwartet: `Build succeeded`.
 **Files:**
 - Create: `scripts/Maze/CellState.cs`
 
-- [ ] **Step 1: Datei anlegen**
+- [x] **Step 1: Datei anlegen**
 
 ```csharp
 namespace Maze.Model;
@@ -361,7 +376,7 @@ public enum CellState
 **Files:**
 - Create: `scripts/Maze/Cell.cs`
 
-- [ ] **Step 1: Datei anlegen**
+- [x] **Step 1: Datei anlegen**
 
 ```csharp
 namespace Maze.Model;
@@ -1393,7 +1408,7 @@ public sealed class RecursiveBacktrackerGenerator : IMazeGenerator
 **Files:**
 - Modify: `scripts/Main.cs`
 
-- [ ] **Step 1: Main vollständig erweitern**
+- [x] **Step 1: Main vollständig erweitern**
 
 ```csharp
 using System;
@@ -1497,7 +1512,7 @@ public partial class Main : Node
 }
 ```
 
-- [ ] **Step 2: Build & Smoketest**
+- [x] **Step 2: Build & Smoketest**
 
 ```powershell
 & $env:GODOT4 --path $PWD --build-solutions
@@ -1518,7 +1533,7 @@ Ziel: Drei zusätzliche Erstellungsalgorithmen. Auswahl im HUD bleibt unverände
 **Files:**
 - Create: `scripts/Generators/GrowingTreeGenerator.cs`
 
-- [ ] **Step 1: Datei anlegen**
+- [x] **Step 1: Datei anlegen**
 
 ```csharp
 using System.Collections.Generic;
@@ -1591,7 +1606,7 @@ public sealed class GrowingTreeGenerator : IMazeGenerator
 }
 ```
 
-- [ ] **Step 2: In Main registrieren**
+- [x] **Step 2: In Main registrieren**
 
 In `scripts/Main.cs` das `_generators`-Dictionary erweitern:
 
@@ -1610,7 +1625,7 @@ private readonly Dictionary<string, IMazeGenerator> _generators = new()
 **Files:**
 - Create: `scripts/Generators/RecursiveDivisionGenerator.cs`
 
-- [ ] **Step 1: Datei anlegen**
+- [x] **Step 1: Datei anlegen**
 
 ```csharp
 using System.Collections.Generic;
@@ -1700,7 +1715,7 @@ public sealed class RecursiveDivisionGenerator : IMazeGenerator
 }
 ```
 
-- [ ] **Step 2: Registrieren**
+- [x] **Step 2: Registrieren**
 
 ```csharp
 private readonly Dictionary<string, IMazeGenerator> _generators = new()
@@ -1711,9 +1726,19 @@ private readonly Dictionary<string, IMazeGenerator> _generators = new()
 };
 ```
 
-### Task 6.3 (optional): `CellularAutomataGenerator`
+### Task 6.3 (optional): `CellularAutomataGenerator` (Parr 2018, "true maze")
 
-> Erzeugt höhlenartige Layouts. Erfordert Connected-Components-Postprocessing, damit alles erreichbar ist. Optionale Erweiterung — kann später ergänzt werden.
+> **Wichtig:** Hier verwenden wir **nicht** die klassische 4-5-Höhlenregel — die produziert Höhlen, keine Labyrinthe. Statt dessen implementieren wir den Cellular-Automata-Ansatz aus **Justin A. Parr, _Generating Mazes Using Cellular Automata_ (2018)**, der ein echtes perfektes Spanning-Tree-Labyrinth (1-Zellen-breite Korridore, keine Zyklen, alle Zellen erreichbar) per Zustandsmaschine pro Zelle erzeugt.
+>
+> **Zustände pro Zelle:** `Disconnected (0)` → `Seed (1)` → `Invite (2)` → `Connected (3)`.
+>
+> **Regelablauf pro CA-Tick (Snapshot/Backbuffer-Mechanik):**
+> 1. **Disconnected**: Falls ein Nachbar im `Invite`-Zustand mit `InviteVector` auf mich zeigt → ich werde `Seed`, merke mir den Nachbarn als Eltern (`ConnectVector`), die Wand zwischen uns wird entfernt.
+> 2. **Seed**: Sammle disconnected Nachbarn. Wähle eine Richtung mit Direktionspersistenz (mit `1 - TurnProbability` geradeaus, also Gegenteil von `ConnectVector`; sonst zufällig). Setze `InviteVector`. Werde `Invite`. Hat keine Disconnected Nachbarn → werde `Connected` (Seed stirbt).
+> 3. **Invite**: Mit `BranchProbability` zurück zu `Seed` (Verzweigung), sonst → `Connected`.
+> 4. **Connected**: Nur aktiv, wenn **kein** Seed/Invite mehr lebt. Dann: borderst du Disconnected, wirst du mit `BranchProbability` wieder Seed (Failsafe).
+>
+> Optimum laut Paper: `BranchProbability = 5%`, `TurnProbability = 10%` (= 90% geradeaus).
 
 **Files:**
 - Create: `scripts/Generators/CellularAutomataGenerator.cs`
@@ -1721,142 +1746,294 @@ private readonly Dictionary<string, IMazeGenerator> _generators = new()
 - [ ] **Step 1: Datei anlegen**
 
 ```csharp
+using System;
 using System.Collections.Generic;
 using Maze.Model;
 
 namespace Maze.Generators;
 
 /// <summary>
-/// Cellular Automata-Generator (Klassische 4-5-Regel) für höhlenartige Layouts.
-/// Schritte:
-/// 1. Zufällige Wand/Open-Belegung mit Wahrscheinlichkeit p (Default 0.45 = Wand).
-/// 2. n Iterationen 4-5-Regel: Zelle wird zu Wand, wenn 5+ Nachbarn Wand sind, zu Open bei <=3.
-/// 3. Connected-Components-Pass: kleinste Komponenten werden mit der größten verbunden.
-/// 4. Anschließend "echte" Wandstruktur ableiten (nur an Open-Open-Übergängen Wand entfernt).
+/// Cellular Automata-Generator nach Justin A. Parr (2018).
+/// Erzeugt ein perfektes Spanning-Tree-Labyrinth durch eine simple
+/// 4-Zustands-Maschine pro Zelle und Snapshot-basierte CA-Ticks.
 /// </summary>
 public sealed class CellularAutomataGenerator : IMazeGenerator
 {
     public string Id   => "cellular-automata";
-    public string Name => "Cellular Automata (4-5)";
+    public string Name => "Cellular Automata (Parr, true maze)";
 
-    private const int   Iterations           = 4;
-    private const float InitialWallChance    = 0.45f;
-    private const int   BirthThreshold       = 5;
-    private const int   SurvivalThreshold    = 4;
+    // Optimum laut Paper: 5% Verzweigungswahrscheinlichkeit
+    private const int BranchProbabilityPercent = 5;
+    // Optimum laut Paper: 10% Drehwahrscheinlichkeit (= 90% geradeaus)
+    private const int TurnProbabilityPercent   = 10;
+
+    // Reine Sicherheit gegen pathologische Endlosschleifen.
+    private const int SafetyMaxTicks           = 1_000_000;
+
+    private enum CaState : byte
+    {
+        Disconnected = 0,
+        Seed         = 1,
+        Invite       = 2,
+        Connected    = 3
+    }
+
+    private struct CellInfo
+    {
+        public CaState     State;
+        // Zeigt von dieser Zelle auf die Eltern-Zelle (für Direktionspersistenz).
+        public Direction?  ConnectVector;
+        // Im Invite-Zustand: zeigt auf den eingeladenen Nachbarn.
+        public Direction?  InviteVector;
+    }
 
     public IEnumerable<GenerationStep> Generate(Model.Maze maze, System.Random random)
     {
-        // grid[x,y] = true => Wand, false => Open
-        var grid = new bool[maze.Width, maze.Height];
-        for (int y = 0; y < maze.Height; y++)
-        for (int x = 0; x < maze.Width;  x++)
-            grid[x, y] = random.NextDouble() < InitialWallChance || x == 0 || y == 0 || x == maze.Width - 1 || y == maze.Height - 1;
+        int w = maze.Width;
+        int h = maze.Height;
 
-        // Iteration der 4-5-Regel.
-        for (int iter = 0; iter < Iterations; iter++)
+        // Doppelpufferung: Wir LESEN aus current[,] und SCHREIBEN nach next[,].
+        // Am Ende jedes Ticks wird next nach current kopiert.
+        var current = new CellInfo[w, h];
+        var next    = new CellInfo[w, h];
+
+        // Eine zufällige Startzelle wird der Initial-Seed.
+        int sx = random.Next(w);
+        int sy = random.Next(h);
+        current[sx, sy].State = CaState.Seed;
+
+        Cell startCell = maze.GetCell(sx, sy);
+        startCell.State = CellState.Carving;
+        yield return new GenerationStep(startCell, null, null, CellState.Carving, "Initial seed");
+
+        for (int tick = 0; tick < SafetyMaxTicks; tick++)
         {
-            var next = new bool[maze.Width, maze.Height];
-            for (int y = 0; y < maze.Height; y++)
-            for (int x = 0; x < maze.Width;  x++)
+            // Backbuffer mit dem aktuellen Stand vorbelegen — Zellen, die keine Regel
+            // ausführen, behalten dadurch ihren Zustand.
+            Array.Copy(current, next, current.Length);
+
+            // Vor dem Regelpass einmal feststellen, ob aktuell überhaupt noch
+            // ein Seed/Invite "lebt". Wird vom Connected-Failsafe gebraucht.
+            bool anyActive = AnyActive(current, w, h);
+
+            // -------- Regelpass über alle Zellen --------
+            for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
             {
-                int wallCount = CountWallNeighbors(grid, x, y, maze.Width, maze.Height);
-                next[x, y] = grid[x, y] ? wallCount >= SurvivalThreshold : wallCount >= BirthThreshold;
+                CellInfo me = current[x, y];
+
+                switch (me.State)
+                {
+                    case CaState.Disconnected:
+                        foreach (var step in TryAcceptInvitation(maze, current, next, x, y, random))
+                            yield return step;
+                        break;
+
+                    case CaState.Seed:
+                        foreach (var step in RunSeed(maze, current, next, x, y, me, random))
+                            yield return step;
+                        break;
+
+                    case CaState.Invite:
+                        foreach (var step in RunInvite(maze, next, x, y, random))
+                            yield return step;
+                        break;
+
+                    case CaState.Connected:
+                        if (!anyActive)
+                            foreach (var step in TryRevive(maze, current, next, x, y, random))
+                                yield return step;
+                        break;
+                }
             }
-            grid = next;
-            // Wir geben nach jeder Iteration einen Sammel-Schritt aus, damit man die Welle sieht.
-            yield return new GenerationStep(maze.GetCell(0, 0), null, null, CellState.Carving, $"Iter {iter+1}");
-        }
 
-        // Connected-Components-Pass: nur größte Komponente bleibt Open, Rest wird Wand.
-        var labels = LabelComponents(grid, maze.Width, maze.Height);
-        int dominant = DominantLabel(labels, maze.Width, maze.Height);
-        if (dominant >= 0)
-        {
-            for (int y = 0; y < maze.Height; y++)
-            for (int x = 0; x < maze.Width;  x++)
-                if (labels[x, y] != dominant) grid[x, y] = true;
-        }
+            // Snapshot übernehmen: next wird zu current für den nächsten Tick.
+            Array.Copy(next, current, next.Length);
 
-        // Wandstruktur in das Maze projizieren: zwischen zwei Open-Zellen Wand entfernen.
-        for (int y = 0; y < maze.Height; y++)
-        for (int x = 0; x < maze.Width;  x++)
+            // Termination: alle Zellen entweder Connected oder noch aktiv?
+            // Wir sind fertig, wenn KEINE Disconnected-Zelle mehr existiert
+            // UND kein Seed/Invite mehr lebt (sonst wären weitere Carves möglich).
+            if (!AnyDisconnected(current, w, h) && !AnyActive(current, w, h))
+                yield break;
+        }
+    }
+
+    // ---- Zustandsregeln ------------------------------------------------------
+
+    private static IEnumerable<GenerationStep> TryAcceptInvitation(
+        Model.Maze maze, CellInfo[,] current, CellInfo[,] next,
+        int x, int y, System.Random random)
+    {
+        // Suche einen Nachbarn im Invite-Zustand, der per InviteVector auf mich zeigt.
+        foreach (var dir in DirectionHelper.All)
         {
+            var (dx, dy) = DirectionHelper.Offset(dir);
+            int nx = x + dx;
+            int ny = y + dy;
+            if (!maze.IsInside(nx, ny)) continue;
+
+            CellInfo neighbor = current[nx, ny];
+            if (neighbor.State != CaState.Invite) continue;
+            if (neighbor.InviteVector != DirectionHelper.Opposite(dir)) continue;
+
+            // Einladung annehmen: ich werde Seed, Wand zwischen uns fällt,
+            // Eltern-Vektor zeigt auf den einladenden Nachbarn.
+            next[x, y].State         = CaState.Seed;
+            next[x, y].ConnectVector = dir;
+            next[x, y].InviteVector  = null;
+
+            Cell me  = maze.GetCell(x, y);
+            Cell par = maze.GetCell(nx, ny);
+            maze.RemoveWallBetween(me, dir);
+            me.State = CellState.Carving;
+
+            yield return new GenerationStep(me, par, dir, CellState.Carving, "Accept invite");
+            yield break;
+        }
+    }
+
+    private static IEnumerable<GenerationStep> RunSeed(
+        Model.Maze maze, CellInfo[,] current, CellInfo[,] next,
+        int x, int y, CellInfo me, System.Random random)
+    {
+        // Bitfeld der Disconnected-Nachbarn (Bit i = Richtung i).
+        int neighborMask = BuildDisconnectedMask(maze, current, x, y);
+
+        if (neighborMask == 0)
+        {
+            // Kein freier Nachbar mehr -> Seed stirbt, wird Connected.
+            next[x, y].State        = CaState.Connected;
+            next[x, y].InviteVector = null;
             Cell c = maze.GetCell(x, y);
-            c.State = grid[x, y] ? CellState.Filled : CellState.Open;
-            // Standard: Wände an allen Seiten gesetzt. Wenn beide Open, brechen wir.
-            if (!grid[x, y] && x + 1 < maze.Width && !grid[x + 1, y])
-                maze.RemoveWallBetween(c, Direction.East);
-            if (!grid[x, y] && y + 1 < maze.Height && !grid[x, y + 1])
-                maze.RemoveWallBetween(c, Direction.South);
-            yield return new GenerationStep(c, null, null, c.State, "Project");
+            c.State = CellState.Open;
+            yield return new GenerationStep(c, null, null, CellState.Open, "Seed dies");
+            yield break;
+        }
+
+        // Richtungswahl mit Persistenz: 90% geradeaus, 10% zufällig.
+        Direction picked = ChooseDirection(neighborMask, me.ConnectVector, random);
+        next[x, y].State        = CaState.Invite;
+        next[x, y].InviteVector = picked;
+        // Kein Yield: Seed und Invite sehen visuell gleich aus (beide Carving).
+    }
+
+    private static IEnumerable<GenerationStep> RunInvite(
+        Model.Maze maze, CellInfo[,] next,
+        int x, int y, System.Random random)
+    {
+        if (random.Next(100) < BranchProbabilityPercent)
+        {
+            // Verzweigen: zurück zu Seed (zusätzlicher aktiver Front-Zelle).
+            next[x, y].State        = CaState.Seed;
+            next[x, y].InviteVector = null;
+            // Kein Yield: bleibt visuell Carving.
+        }
+        else
+        {
+            // Stabilisieren: Connected.
+            next[x, y].State        = CaState.Connected;
+            next[x, y].InviteVector = null;
+            Cell c = maze.GetCell(x, y);
+            c.State = CellState.Open;
+            yield return new GenerationStep(c, null, null, CellState.Open, "Connected");
         }
     }
 
-    private static int CountWallNeighbors(bool[,] grid, int x, int y, int w, int h)
+    private static IEnumerable<GenerationStep> TryRevive(
+        Model.Maze maze, CellInfo[,] current, CellInfo[,] next,
+        int x, int y, System.Random random)
     {
+        // Failsafe: nur wenn KEIN Seed/Invite mehr lebt — wird vom Aufrufer geprüft.
+        // Ich bin Connected. Borderne ich Disconnected? Dann mit BranchProbability
+        // wieder Seed werden, damit die Front weiterläuft.
+        bool bordersDisconnected = false;
+        foreach (var dir in DirectionHelper.All)
+        {
+            var (dx, dy) = DirectionHelper.Offset(dir);
+            int nx = x + dx;
+            int ny = y + dy;
+            if (!maze.IsInside(nx, ny)) continue;
+            if (current[nx, ny].State == CaState.Disconnected)
+            {
+                bordersDisconnected = true;
+                break;
+            }
+        }
+        if (!bordersDisconnected) yield break;
+        if (random.Next(100) >= BranchProbabilityPercent) yield break;
+
+        next[x, y].State = CaState.Seed;
+        Cell c = maze.GetCell(x, y);
+        c.State = CellState.Carving;
+        yield return new GenerationStep(c, null, null, CellState.Carving, "Revive");
+    }
+
+    // ---- Hilfsfunktionen -----------------------------------------------------
+
+    private static int BuildDisconnectedMask(Model.Maze maze, CellInfo[,] grid, int x, int y)
+    {
+        int mask = 0;
+        foreach (var dir in DirectionHelper.All)
+        {
+            var (dx, dy) = DirectionHelper.Offset(dir);
+            int nx = x + dx;
+            int ny = y + dy;
+            if (!maze.IsInside(nx, ny)) continue;
+            if (grid[nx, ny].State != CaState.Disconnected) continue;
+            mask |= 1 << (int)dir;
+        }
+        return mask;
+    }
+
+    private static Direction ChooseDirection(int neighborMask, Direction? connectVector, System.Random random)
+    {
+        // Geradeaus = Gegenteil von ConnectVector (Eltern liegen "hinter mir",
+        // also will ich in die Gegenrichtung weitergehen).
+        bool turnNow = random.Next(100) < TurnProbabilityPercent;
+
+        if (!turnNow && connectVector.HasValue)
+        {
+            Direction straight = DirectionHelper.Opposite(connectVector.Value);
+            if ((neighborMask & (1 << (int)straight)) != 0)
+                return straight;
+            // Geradeaus geht nicht (Wand/Rand/besetzt) — wir müssen sowieso umlenken.
+        }
+
+        // Zufällige verfügbare Richtung wählen.
+        Span<Direction> available = stackalloc Direction[4];
         int count = 0;
-        for (int dy = -1; dy <= 1; dy++)
-        for (int dx = -1; dx <= 1; dx++)
-        {
-            if (dx == 0 && dy == 0) continue;
-            int nx = x + dx, ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) { count++; continue; }
-            if (grid[nx, ny]) count++;
-        }
-        return count;
+        foreach (var dir in DirectionHelper.All)
+            if ((neighborMask & (1 << (int)dir)) != 0)
+                available[count++] = dir;
+        return available[random.Next(count)];
     }
 
-    private static int[,] LabelComponents(bool[,] grid, int w, int h)
+    private static bool AnyActive(CellInfo[,] grid, int w, int h)
     {
-        var labels = new int[w, h];
-        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) labels[x, y] = -1;
-        int next = 0;
-        for (int y = 0; y < h; y++)
-        for (int x = 0; x < w;  x++)
-        {
-            if (grid[x, y] || labels[x, y] != -1) continue;
-            FloodFill(grid, labels, x, y, next++, w, h);
-        }
-        return labels;
-    }
-
-    private static void FloodFill(bool[,] grid, int[,] labels, int sx, int sy, int label, int w, int h)
-    {
-        var stack = new Stack<(int, int)>();
-        stack.Push((sx, sy));
-        while (stack.Count > 0)
-        {
-            var (x, y) = stack.Pop();
-            if (x < 0 || y < 0 || x >= w || y >= h) continue;
-            if (grid[x, y] || labels[x, y] != -1) continue;
-            labels[x, y] = label;
-            stack.Push((x + 1, y));
-            stack.Push((x - 1, y));
-            stack.Push((x, y + 1));
-            stack.Push((x, y - 1));
-        }
-    }
-
-    private static int DominantLabel(int[,] labels, int w, int h)
-    {
-        var counts = new Dictionary<int, int>();
         for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++)
         {
-            int l = labels[x, y];
-            if (l < 0) continue;
-            counts.TryGetValue(l, out int c);
-            counts[l] = c + 1;
+            CaState s = grid[x, y].State;
+            if (s == CaState.Seed || s == CaState.Invite) return true;
         }
-        int best = -1, bestCount = -1;
-        foreach (var (label, c) in counts)
-            if (c > bestCount) { best = label; bestCount = c; }
-        return best;
+        return false;
+    }
+
+    private static bool AnyDisconnected(CellInfo[,] grid, int w, int h)
+    {
+        for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++)
+            if (grid[x, y].State == CaState.Disconnected) return true;
+        return false;
     }
 }
 ```
 
-- [ ] **Step 2: Registrieren**
+> **Hinweise zur Visualisierung:** Wir geben pro CA-Tick mehrere `GenerationStep`s aus — einen pro sichtbarer Zellzustands­änderung (Accept, Seed-Tod, Connected, Revive). Reine Seed↔Invite-Wechsel werden nicht ausgegeben, weil sie visuell beide "aktiv/Carving" sind. Das ergibt eine schön welleartige Animation, ohne unsichtbare Leerschritte.
+>
+> **Vergleich mit den anderen Generatoren:** Recursive Backtracker erzeugt lange gewundene Gänge mit hohem River-Faktor; Growing Tree interpoliert je nach Strategie zwischen Backtracker- und Prim-Look; Recursive Division wirkt architektonisch. Der Parr-CA hat einen ganz eigenen Charakter: lange parallele Gänge, viele 90°-Abzweigungen, Spiralen — siehe Bilder im PDF auf Seite 32.
+
+- [x] **Step 2: Registrieren**
 
 ```csharp
 private readonly Dictionary<string, IMazeGenerator> _generators = new()
@@ -2030,7 +2207,7 @@ shadow_enabled = true
 - Modify: `scenes/Main.tscn`
 - Modify: `scripts/Main.cs`
 
-- [ ] **Step 1: `Main.tscn` um 3D-View erweitern**
+- [x] **Step 1: `Main.tscn` um 3D-View erweitern**
 
 ```text
 [gd_scene load_steps=6 format=3 uid="uid://b0maze0main"]
@@ -2054,7 +2231,7 @@ script = ExtResource("4_runner")
 [node name="Hud" parent="." instance=ExtResource("2_hud")]
 ```
 
-- [ ] **Step 2: `Main.cs` View-Toggle implementieren**
+- [x] **Step 2: `Main.cs` View-Toggle implementieren**
 
 In `Main.cs`:
 
@@ -2082,6 +2259,8 @@ private void OnViewToggled(bool use3D)
 ```
 
 > Hinweis: Da `MazeView3D.tscn` mit `visible = false` startet, ist der Default die 2D-Ansicht. Erst Klick auf den Toggle aktiviert 3D.
+
+> **Performance-Hinweis (nachträglich korrigiert):** `MazeView3D.SetMaze()` wird **nicht** in `OnGenerateRequested` und **nicht** in `OnGenerationStepProduced` aufgerufen – das wäre für jeden einzelnen Generierungsschritt zu langsam. Stattdessen wird `_view3D.SetMaze(_currentMaze)` exakt **einmal** in `OnGenerationFinished` aufgerufen, sobald das Maze vollständig ist. In `OnViewToggled` wird zusätzlich `SetMaze` aufgerufen, falls der Nutzer auf 3D umschaltet bevor die View das erste Mal gebaut wurde.
 
 - [ ] **Step 3: Build und Test**
 
@@ -2158,6 +2337,8 @@ using Maze.Solvers;
 // ...
 
 private readonly Dictionary<string, IMazeSolver> _solvers = new();
+private Cell _solverStart = null!;
+private Cell _solverGoal  = null!;
 
 // in _Ready():
 _runner.SolverStepProduced += OnSolverStepProduced;
@@ -2174,22 +2355,27 @@ private void OnSolveRequested(string solverId)
     }
 
     _currentMaze.ResetSolverState();
-    Cell start = _currentMaze.GetCell(0, 0);
-    Cell goal  = _currentMaze.GetCell(_currentMaze.Width - 1, _currentMaze.Height - 1);
-    start.State = CellState.Start;
-    goal.State  = CellState.Goal;
+    _solverStart = _currentMaze.GetCell(0, 0);
+    _solverGoal  = _currentMaze.GetCell(_currentMaze.Width - 1, _currentMaze.Height - 1);
+    _solverStart.State = CellState.Start;
+    _solverGoal.State  = CellState.Goal;
     _view2D.Refresh();
     _view3D.Refresh();
 
     _runner.StopAll();
-    _runner.StartSolver(solver.Solve(_currentMaze, start, goal));
+    _runner.StartSolver(solver.Solve(_currentMaze, _solverStart, _solverGoal));
 }
 
 private void OnSolverStepProduced()
 {
     var step = _runner.LastSolverStep;
     if (step is null) return;
-    step.Cell.State    = step.NewState;
+    if (step.Cell == _solverStart)
+        step.Cell.State = CellState.Start;
+    else if (step.Cell == _solverGoal)
+        step.Cell.State = CellState.Goal;
+    else
+        step.Cell.State = step.NewState;
     step.Cell.Distance = step.Distance;
     _view2D.Refresh();
 }
@@ -2202,6 +2388,8 @@ private void OnSolverFinished()
 ```
 
 > Damit der Solver-Toggle die View nicht mit Carving-Resten überschreibt, ruft `OnSolveRequested` `ResetSolverState` auf — Generation-Wände bleiben dabei erhalten.
+>
+> Wichtiger lokaler Befund: `Main` schreibt jeden Solver-Schritt direkt in `step.Cell.State`. Ohne die zusätzlichen Felder `_solverStart` und `_solverGoal` würden Start- und Zielzelle bei einem naiv implementierten Solver schon beim ersten Frontier-/Visited-/Path-Schritt ihre Markierung verlieren. Die Visualisierung muss diese beiden Endpunkte deshalb in `OnSolverStepProduced` explizit stabil halten.
 
 ---
 
@@ -2210,6 +2398,8 @@ private void OnSolverFinished()
 Sechs Algorithmen — die "kuratierte Auswahl" aus dem Briefing.
 
 ### Task 9.1: Breadth-First Search
+
+> BFS ist die erste Stelle, an der diese Falle sichtbar wird: Der Algorithmus arbeitet korrekt, aber die Anzeige wäre irreführend, wenn `Main` die Endpunkte nicht separat schützt. Daher gehört die Endpunkt-Stabilisierung aus Phase 8 zur praktischen Voraussetzung dieses Tasks.
 
 **Files:**
 - Create: `scripts/Solvers/BreadthFirstSolver.cs`
