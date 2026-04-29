@@ -33,7 +33,9 @@ public partial class Main : Node
     private readonly Dictionary<string, IMazeSolver> _solvers = new()
     {
         ["bfs"] = new BreadthFirstSolver(),
-        ["dfs"] = new DepthFirstSolver()
+        ["dfs"] = new DepthFirstSolver(),
+        ["a-star"] = new AStarSolver(),
+        ["greedy"] = new GreedyBestFirstSolver()
     };
 
     private readonly Random _random = new();
