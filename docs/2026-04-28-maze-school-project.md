@@ -26,8 +26,8 @@
 res://
 ├── icon.svg
 ├── project.godot
-├── maze-sascha.csproj          (von Godot beim ersten C#-Skript erzeugt)
-├── maze-sascha.sln
+├── maze123.csproj          (von Godot beim ersten C#-Skript erzeugt)
+├── maze123.sln
 ├── scenes/
 │   ├── Main.tscn               Root: Node, Script: Main.cs
 │   ├── Hud.tscn                Root: CanvasLayer, Script: Hud.cs
@@ -145,7 +145,7 @@ Vor dem Block `[dotnet]` einfügen (oder `[application]` ergänzen):
 ```ini
 [application]
 
-config/name="maze-sascha"
+config/name="maze123"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
 run/main_scene="res://scenes/Main.tscn"
@@ -153,7 +153,7 @@ run/main_scene="res://scenes/Main.tscn"
 
 ### Task 0.3: Main.cs anlegen und C#-Projekt initialisieren
 
-> Beim ersten Mal muss der Godot-Editor einmal interaktiv gestartet werden: er entdeckt das `.cs`-Skript, fragt nach dem Anlegen der Solution und erzeugt dann `maze-sascha.csproj` und `maze-sascha.sln`. Erst danach funktionieren `dotnet build` und der Headless-Smoke. Die rein per CLI erreichbare Option `--build-solutions` reicht in Godot 4.6.2 dafür **nicht** aus.
+> Beim ersten Mal muss der Godot-Editor einmal interaktiv gestartet werden: er entdeckt das `.cs`-Skript, fragt nach dem Anlegen der Solution und erzeugt dann `maze123.csproj` und `maze123.sln`. Erst danach funktionieren `dotnet build` und der Headless-Smoke. Die rein per CLI erreichbare Option `--build-solutions` reicht in Godot 4.6.2 dafür **nicht** aus.
 
 **Files:**
 - Create: `scripts/Main.cs`
@@ -215,8 +215,8 @@ public partial class Main : Node
 Im laufenden Editor:
 
 1. Menü öffnen: `Project` → `Tools` → `C#` → **`Create C# solution`** anklicken.
-   - Falls der Eintrag fehlt oder ausgegraut ist (z. B. weil Reste vorhanden sind), Workspace-Root prüfen — gibt es bereits `maze-sascha.csproj`? Wenn nicht, weiter mit dem Fallback in Step 5.
-2. Godot legt jetzt `maze-sascha.csproj` und `maze-sascha.sln` im Projekt-Root an.
+   - Falls der Eintrag fehlt oder ausgegraut ist (z. B. weil Reste vorhanden sind), Workspace-Root prüfen — gibt es bereits `maze123.csproj`? Wenn nicht, weiter mit dem Fallback in Step 5.
+2. Godot legt jetzt `maze123.csproj` und `maze123.sln` im Projekt-Root an.
 3. Anschließend `Build → Build Project` (oder das Hammer-Symbol oben rechts) ausführen, damit Godot die Marshalling-Quellen + die initiale Assembly erzeugt.
 4. Editor schließen.
 
@@ -227,7 +227,7 @@ Get-ChildItem -Path $PWD -Filter "*.csproj"
 Get-ChildItem -Path $PWD -Filter "*.sln"
 ```
 
-Erwartet: je ein Treffer (`maze-sascha.csproj`, `maze-sascha.sln`).
+Erwartet: je ein Treffer (`maze123.csproj`, `maze123.sln`).
 
 
 - [ ] **Step 5: Build prüfen**
