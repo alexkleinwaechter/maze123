@@ -20,7 +20,9 @@ public partial class Main : Node
     private readonly Dictionary<string, IMazeGenerator> _generators = new()
     {
         ["recursive-backtracker"] = new RecursiveBacktrackerGenerator(),
-        ["growing-tree"] = new GrowingTreeGenerator()
+        ["growing-tree"] = new GrowingTreeGenerator(),
+        ["recursive-division"] = new RecursiveDivisionGenerator(),
+        ["cellular-automata"] = new CellularAutomataGenerator()
     };
 
     private readonly Random _random = new();
