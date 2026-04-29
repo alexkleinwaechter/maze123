@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using Godot;
 using Maze.Generators;
 using Maze.Model;
+using Maze.Solvers;
 using Maze.UI;
 using Maze.Views;
 
@@ -18,6 +19,8 @@ public partial class Main : Node
     private AlgorithmRunner _runner = null!;
     private global::Maze.Model.Maze? _currentMaze;
     private global::Maze.Model.Maze? _lastMazeBuiltFor3D;
+    private Cell _solverStart = null!;
+    private Cell _solverGoal = null!;
 
     private readonly Dictionary<string, IMazeGenerator> _generators = new()
     {
@@ -25,6 +28,11 @@ public partial class Main : Node
         ["growing-tree"] = new GrowingTreeGenerator(),
         ["recursive-division"] = new RecursiveDivisionGenerator(),
         ["cellular-automata"] = new CellularAutomataGenerator()
+    };
+
+    private readonly Dictionary<string, IMazeSolver> _solvers = new()
+    {
+        ["bfs"] = new BreadthFirstSolver()
     };
 
     private readonly Random _random = new();
@@ -36,6 +44,9 @@ public partial class Main : Node
         _view3D = GetNode<MazeView3D>("MazeView3D");
         _runner = GetNode<AlgorithmRunner>("Runner");
 
+        _view2D.Visible = true;
+        _view3D.Visible = false;
+
         _hud.GenerateRequested += OnGenerateRequested;
         _hud.SolveRequested += OnSolveRequested;
         _hud.SpeedChanged += OnSpeedChanged;
@@ -46,9 +57,11 @@ public partial class Main : Node
 
         _runner.GenerationStepProduced += OnGenerationStepProduced;
         _runner.GenerationFinished += OnGenerationFinished;
+        _runner.SolverStepProduced += OnSolverStepProduced;
+        _runner.SolverFinished += OnSolverFinished;
         _runner.StepsPerSecond = 30f;
 
-        GD.Print("[Main] HUD + 2D-View verbunden.");
+        GD.Print("[Main] HUD, 2D-View und 3D-View verbunden.");
     }
 
     public override void _Process(double delta)
@@ -109,8 +122,62 @@ public partial class Main : Node
         GD.Print("[Main] Generator fertig.");
     }
 
-    private void OnSolveRequested(string solverId) =>
-        GD.Print($"[Main] Solve mit {solverId}");
+    private void OnSolveRequested(string solverId)
+    {
+        if (_currentMaze is null)
+        {
+            GD.PrintErr("Kein Maze.");
+            return;
+        }
+
+        if (!_solvers.TryGetValue(solverId, out IMazeSolver? solver))
+        {
+            GD.PrintErr($"Unbekannter Solver: {solverId}");
+            return;
+        }
+
+        _currentMaze.ResetSolverState();
+        _solverStart = _currentMaze.GetCell(0, 0);
+        _solverGoal = _currentMaze.GetCell(_currentMaze.Width - 1, _currentMaze.Height - 1);
+        _solverStart.State = CellState.Start;
+        _solverGoal.State = CellState.Goal;
+        _view2D.Refresh();
+        _view3D.Refresh();
+
+        _runner.StopAll();
+        _runner.StartSolver(solver.Solve(_currentMaze, _solverStart, _solverGoal));
+    }
+
+    private void OnSolverStepProduced()
+    {
+        SolverStep? step = _runner.LastSolverStep;
+        if (step is null)
+        {
+            return;
+        }
+
+        if (step.Cell == _solverStart)
+        {
+            step.Cell.State = CellState.Start;
+        }
+        else if (step.Cell == _solverGoal)
+        {
+            step.Cell.State = CellState.Goal;
+        }
+        else
+        {
+            step.Cell.State = step.NewState;
+        }
+
+        step.Cell.Distance = step.Distance;
+        _view2D.Refresh();
+    }
+
+    private void OnSolverFinished()
+    {
+        GD.Print("[Main] Solver fertig.");
+        _view2D.Refresh();
+    }
 
     private void OnSpeedChanged(float stepsPerSecond) =>
         _runner.StepsPerSecond = stepsPerSecond;

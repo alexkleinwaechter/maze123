@@ -6,7 +6,8 @@ using Maze.Model;
 namespace Maze.Views;
 
 /// <summary>
-/// 3D-Visualisierung des Labyrinths. Erzeugt Boden und Wandquader aus dem Modell.
+/// 3D-Visualisierung des Labyrinths. Erzeugt fuer jede Wand einen MeshInstance3D-Wuerfel
+/// und einen grossen Bodenmesh. Wird bei jedem SetMaze/Refresh komplett neu gebaut.
 /// </summary>
 public partial class MazeView3D : Node3D
 {
@@ -50,6 +51,7 @@ public partial class MazeView3D : Node3D
 
     public void Refresh()
     {
+        // In dieser einfachen Variante reicht ein vollstaendiger Neubau.
         if (_maze is not null)
         {
             Rebuild();
