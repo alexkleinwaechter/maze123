@@ -14,8 +14,10 @@ public partial class Main : Node
 {
     private Hud _hud = null!;
     private MazeView2D _view2D = null!;
+    private MazeView3D _view3D = null!;
     private AlgorithmRunner _runner = null!;
     private global::Maze.Model.Maze? _currentMaze;
+    private global::Maze.Model.Maze? _lastMazeBuiltFor3D;
 
     private readonly Dictionary<string, IMazeGenerator> _generators = new()
     {
@@ -31,6 +33,7 @@ public partial class Main : Node
     {
         _hud = GetNode<Hud>("Hud");
         _view2D = GetNode<MazeView2D>("MazeView2D");
+        _view3D = GetNode<MazeView3D>("MazeView3D");
         _runner = GetNode<AlgorithmRunner>("Runner");
 
         _hud.GenerateRequested += OnGenerateRequested;
@@ -68,7 +71,9 @@ public partial class Main : Node
 
         _runner.StopAll();
         _currentMaze = new global::Maze.Model.Maze(width, height);
+        _lastMazeBuiltFor3D = null;
         _view2D.SetMaze(_currentMaze);
+        _view3D.ClearMaze();
 
         _runner.StartGeneration(generator.Generate(_currentMaze, _random));
         GD.Print($"[Main] Generator {generator.Name} gestartet.");
@@ -99,6 +104,8 @@ public partial class Main : Node
         }
 
         _view2D.Refresh();
+        _view3D.SetMaze(_currentMaze);
+        _lastMazeBuiltFor3D = _currentMaze;
         GD.Print("[Main] Generator fertig.");
     }
 
@@ -118,10 +125,23 @@ public partial class Main : Node
     {
         _runner.StopAll();
         _currentMaze = null;
+        _lastMazeBuiltFor3D = null;
         _view2D.SetMaze(new global::Maze.Model.Maze(2, 2));
+        _view3D.ClearMaze();
         GD.Print("[Main] Reset.");
     }
 
-    private void OnViewToggled(bool use3D) =>
+    private void OnViewToggled(bool use3D)
+    {
+        _view2D.Visible = !use3D;
+        _view3D.Visible = use3D;
+
+        if (use3D && _currentMaze is not null && !ReferenceEquals(_lastMazeBuiltFor3D, _currentMaze))
+        {
+            _view3D.SetMaze(_currentMaze);
+            _lastMazeBuiltFor3D = _currentMaze;
+        }
+
         GD.Print($"[Main] 3D-Ansicht = {use3D}");
+    }
 }
