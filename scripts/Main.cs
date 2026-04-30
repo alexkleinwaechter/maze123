@@ -14,6 +14,7 @@ namespace Maze;
 public partial class Main : Node
 {
     private Hud _hud = null!;
+    private StatsPanel _stats = null!;
     private MazeView2D _view2D = null!;
     private MazeView3D _view3D = null!;
     private AlgorithmRunner _runner = null!;
@@ -36,14 +37,17 @@ public partial class Main : Node
         ["dfs"] = new DepthFirstSolver(),
         ["a-star"] = new AStarSolver(),
         ["greedy"] = new GreedyBestFirstSolver(),
-        ["wall-follower"] = new WallFollowerSolver()
+        ["wall-follower"] = new WallFollowerSolver(),
+        ["dead-end-filling"] = new DeadEndFillingSolver()
     };
 
     private readonly Random _random = new();
+    private readonly PerformanceTracker _tracker = new();
 
     public override void _Ready()
     {
         _hud = GetNode<Hud>("Hud");
+        _stats = GetNode<StatsPanel>("Hud/StatsPanel");
         _view2D = GetNode<MazeView2D>("MazeView2D");
         _view3D = GetNode<MazeView3D>("MazeView3D");
         _runner = GetNode<AlgorithmRunner>("Runner");
@@ -86,6 +90,7 @@ public partial class Main : Node
             return;
         }
 
+        _tracker.Start();
         _runner.StopAll();
         _currentMaze = new global::Maze.Model.Maze(width, height);
         _lastMazeBuiltFor3D = null;
@@ -105,6 +110,9 @@ public partial class Main : Node
         }
 
         step.Cell.State = step.NewState;
+        _tracker.TickStep();
+        _tracker.IncrementVisited();
+        _stats.UpdateStats(_tracker.Elapsed, _tracker.Steps, _tracker.VisitedCells, 0, 0);
         _view2D.Refresh();
     }
 
@@ -123,6 +131,8 @@ public partial class Main : Node
         _view2D.Refresh();
         _view3D.SetMaze(_currentMaze);
         _lastMazeBuiltFor3D = _currentMaze;
+        _tracker.Stop();
+        _stats.UpdateStats(_tracker.Elapsed, _tracker.Steps, _tracker.VisitedCells, 0, _tracker.ManagedMemoryDeltaBytes);
         GD.Print("[Main] Generator fertig.");
     }
 
@@ -140,6 +150,7 @@ public partial class Main : Node
             return;
         }
 
+        _tracker.Start();
         _currentMaze.ResetSolverState();
         _solverStart = _currentMaze.GetCell(0, 0);
         _solverGoal = _currentMaze.GetCell(_currentMaze.Width - 1, _currentMaze.Height - 1);
@@ -173,12 +184,26 @@ public partial class Main : Node
             step.Cell.State = step.NewState;
         }
 
+        _tracker.TickStep();
+        if (step.NewState == CellState.Visited)
+        {
+            _tracker.IncrementVisited();
+        }
+
+        if (step.NewState == CellState.Path)
+        {
+            _tracker.SetPathLength(step.Distance + 1);
+        }
+
         step.Cell.Distance = step.Distance;
+        _stats.UpdateStats(_tracker.Elapsed, _tracker.Steps, _tracker.VisitedCells, _tracker.PathLength, 0);
         _view2D.Refresh();
     }
 
     private void OnSolverFinished()
     {
+        _tracker.Stop();
+        _stats.UpdateStats(_tracker.Elapsed, _tracker.Steps, _tracker.VisitedCells, _tracker.PathLength, _tracker.ManagedMemoryDeltaBytes);
         GD.Print("[Main] Solver fertig.");
         _view2D.Refresh();
     }
