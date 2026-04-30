@@ -32,15 +32,66 @@ public partial class MazeView2D : Node2D
     private static readonly Color HeatmapMin = new("#003366");
     private static readonly Color HeatmapMax = new("#ff6f3c");
 
+    private const int ThrottleThreshold = 250;
+    private const double ThrottledRefreshHz = 30.0;
+
+    private CameraController2D _camera = null!;
     private global::Maze.Model.Maze? _maze;
+    private bool _refreshDirty;
+    private double _refreshAccumulator;
+
+    public override void _Ready()
+    {
+        _camera = GetNode<CameraController2D>("Camera2D");
+    }
 
     public void SetMaze(global::Maze.Model.Maze maze)
     {
         _maze = maze;
+        _refreshDirty = false;
+        _refreshAccumulator = 0;
+        QueueRedraw();
+        _camera.FitToMaze(maze);
+    }
+
+    public void Refresh()
+    {
+        if (_maze is null)
+        {
+            return;
+        }
+
+        if (_maze.Width <= ThrottleThreshold && _maze.Height <= ThrottleThreshold)
+        {
+            QueueRedraw();
+            return;
+        }
+
+        _refreshDirty = true;
+    }
+
+    public void ForceRefresh()
+    {
+        _refreshDirty = false;
+        _refreshAccumulator = 0;
         QueueRedraw();
     }
 
-    public void Refresh() => QueueRedraw();
+    public override void _Process(double delta)
+    {
+        if (!_refreshDirty)
+        {
+            return;
+        }
+
+        _refreshAccumulator += delta;
+        if (_refreshAccumulator >= 1.0 / ThrottledRefreshHz)
+        {
+            _refreshAccumulator = 0;
+            _refreshDirty = false;
+            QueueRedraw();
+        }
+    }
 
     public override void _Draw()
     {

@@ -11,6 +11,7 @@ public partial class Hud : CanvasLayer
     [Signal] public delegate void GenerateRequestedEventHandler(int width, int height, string generatorId);
     [Signal] public delegate void SolveRequestedEventHandler(string solverId);
     [Signal] public delegate void SpeedChangedEventHandler(float stepsPerSecond);
+    [Signal] public delegate void UnboundedModeChangedEventHandler(bool unbounded);
     [Signal] public delegate void ViewToggleRequestedEventHandler(bool use3D);
     [Signal] public delegate void HeatmapToggleEventHandler(bool enabled);
     [Signal] public delegate void PauseToggleEventHandler(bool paused);
@@ -20,6 +21,8 @@ public partial class Hud : CanvasLayer
     private HSlider _widthSlider = null!;
     private HSlider _heightSlider = null!;
     private HSlider _speedSlider = null!;
+    private SpinBox _widthSpinBox = null!;
+    private SpinBox _heightSpinBox = null!;
     private OptionButton _generatorChooser = null!;
     private OptionButton _solverChooser = null!;
     private Button _generateButton = null!;
@@ -29,6 +32,7 @@ public partial class Hud : CanvasLayer
     private Button _resetButton = null!;
     private CheckBox _viewToggle = null!;
     private CheckBox _heatmapToggle = null!;
+    private CheckBox _unboundedToggle = null!;
     private Label _widthLabel = null!;
     private Label _heightLabel = null!;
     private Label _speedLabel = null!;
@@ -38,6 +42,8 @@ public partial class Hud : CanvasLayer
         _widthSlider = GetNode<HSlider>("Root/Margin/VBox/Sizes/WidthSlider");
         _heightSlider = GetNode<HSlider>("Root/Margin/VBox/Sizes/HeightSlider");
         _speedSlider = GetNode<HSlider>("Root/Margin/VBox/SpeedRow/SpeedSlider");
+        _widthSpinBox = GetNode<SpinBox>("Root/Margin/VBox/Sizes/WidthSpinBox");
+        _heightSpinBox = GetNode<SpinBox>("Root/Margin/VBox/Sizes/HeightSpinBox");
         _generatorChooser = GetNode<OptionButton>("Root/Margin/VBox/Algos/GeneratorChooser");
         _solverChooser = GetNode<OptionButton>("Root/Margin/VBox/Algos/SolverChooser");
         _generateButton = GetNode<Button>("Root/Margin/VBox/Buttons/GenerateButton");
@@ -50,27 +56,57 @@ public partial class Hud : CanvasLayer
         _widthLabel = GetNode<Label>("Root/Margin/VBox/Sizes/WidthLabel");
         _heightLabel = GetNode<Label>("Root/Margin/VBox/Sizes/HeightLabel");
         _speedLabel = GetNode<Label>("Root/Margin/VBox/SpeedRow/SpeedLabel");
+        _unboundedToggle = GetNode<CheckBox>("Root/Margin/VBox/SpeedRow/UnboundedToggle");
 
         _widthSlider.MinValue = 5;
-        _widthSlider.MaxValue = 75;
+        _widthSlider.MaxValue = 1000;
         _widthSlider.Step = 1;
         _widthSlider.Value = 25;
 
+        _widthSpinBox.MinValue = 5;
+        _widthSpinBox.MaxValue = 1000;
+        _widthSpinBox.Step = 1;
+        _widthSpinBox.Value = 25;
+
         _heightSlider.MinValue = 5;
-        _heightSlider.MaxValue = 75;
+        _heightSlider.MaxValue = 1000;
         _heightSlider.Step = 1;
         _heightSlider.Value = 25;
 
+        _heightSpinBox.MinValue = 5;
+        _heightSpinBox.MaxValue = 1000;
+        _heightSpinBox.Step = 1;
+        _heightSpinBox.Value = 25;
+
         _speedSlider.MinValue = 1;
-        _speedSlider.MaxValue = 240;
+        _speedSlider.MaxValue = 10001;
         _speedSlider.Step = 1;
         _speedSlider.Value = 30;
 
         UpdateLabels();
 
-        _widthSlider.ValueChanged += _ => UpdateLabels();
-        _heightSlider.ValueChanged += _ => UpdateLabels();
+        _widthSlider.ValueChanged += value =>
+        {
+            _widthSpinBox.SetValueNoSignal(value);
+            UpdateLabels();
+        };
+        _widthSpinBox.ValueChanged += value =>
+        {
+            _widthSlider.SetValueNoSignal(value);
+            UpdateLabels();
+        };
+        _heightSlider.ValueChanged += value =>
+        {
+            _heightSpinBox.SetValueNoSignal(value);
+            UpdateLabels();
+        };
+        _heightSpinBox.ValueChanged += value =>
+        {
+            _heightSlider.SetValueNoSignal(value);
+            UpdateLabels();
+        };
         _speedSlider.ValueChanged += OnSpeedChanged;
+        _unboundedToggle.Toggled += OnUnboundedToggled;
         _generateButton.Pressed += OnGeneratePressed;
         _solveButton.Pressed += OnSolvePressed;
         _pauseButton.Toggled += OnPauseToggled;
@@ -87,13 +123,28 @@ public partial class Hud : CanvasLayer
     {
         _widthLabel.Text = $"Breite:  {(int)_widthSlider.Value}";
         _heightLabel.Text = $"Hoehe:    {(int)_heightSlider.Value}";
-        _speedLabel.Text = $"Tempo:  {(int)_speedSlider.Value} Schritte/s";
+
+        if (_unboundedToggle != null && _unboundedToggle.ButtonPressed)
+        {
+            _speedLabel.Text = "Tempo:  ungebremst";
+        }
+        else
+        {
+            _speedLabel.Text = $"Tempo:  {(int)_speedSlider.Value} Schritte/s";
+        }
     }
 
     private void OnSpeedChanged(double value)
     {
         UpdateLabels();
         EmitSignal(SignalName.SpeedChanged, (float)value);
+    }
+
+    private void OnUnboundedToggled(bool pressed)
+    {
+        _speedSlider.Editable = !pressed;
+        UpdateLabels();
+        EmitSignal(SignalName.UnboundedModeChanged, pressed);
     }
 
     private void OnGeneratePressed()
