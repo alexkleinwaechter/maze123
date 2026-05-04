@@ -43,6 +43,7 @@ public partial class Main : Node
 
     private readonly Random _random = new();
     private readonly PerformanceTracker _tracker = new();
+    private bool _suppressViewRefresh;
 
     public override void _Ready()
     {
@@ -63,6 +64,7 @@ public partial class Main : Node
         _hud.ResetRequested += OnResetRequested;
         _hud.ViewToggleRequested += OnViewToggled;
         _hud.HeatmapToggle += OnHeatmapToggled;
+        _hud.UnboundedModeChanged += OnUnboundedModeChanged;
 
         _runner.GenerationStepProduced += OnGenerationStepProduced;
         _runner.GenerationFinished += OnGenerationFinished;
@@ -121,7 +123,13 @@ public partial class Main : Node
         step.Cell.State = step.NewState;
         _tracker.TickStep();
         _tracker.IncrementVisited();
-        _stats.UpdateStats(_tracker.Elapsed, _tracker.Steps, _tracker.VisitedCells, 0, 0);
+
+        if (_suppressViewRefresh)
+        {
+            return;
+        }
+
+        _stats.UpdateStats(_tracker.Elapsed, _tracker.Steps, _tracker.VisitedCells, _tracker.PathLength, 0);
         _view2D.Refresh();
     }
 
@@ -137,7 +145,7 @@ public partial class Main : Node
             cell.State = CellState.Open;
         }
 
-        _view2D.Refresh();
+        _view2D.ForceRefresh();
         _view3D.SetMaze(_currentMaze);
         _lastMazeBuiltFor3D = _currentMaze;
         _tracker.Stop();
@@ -205,6 +213,12 @@ public partial class Main : Node
         }
 
         step.Cell.Distance = step.Distance;
+
+        if (_suppressViewRefresh)
+        {
+            return;
+        }
+
         _stats.UpdateStats(_tracker.Elapsed, _tracker.Steps, _tracker.VisitedCells, _tracker.PathLength, 0);
         _view2D.Refresh();
     }
@@ -214,7 +228,7 @@ public partial class Main : Node
         _tracker.Stop();
         _stats.UpdateStats(_tracker.Elapsed, _tracker.Steps, _tracker.VisitedCells, _tracker.PathLength, _tracker.ManagedMemoryDeltaBytes);
         GD.Print("[Main] Solver fertig.");
-        _view2D.Refresh();
+        _view2D.ForceRefresh();
     }
 
     private void OnSpeedChanged(float stepsPerSecond) =>
@@ -254,5 +268,11 @@ public partial class Main : Node
     {
         _view2D.ShowDistances = enabled;
         _view2D.Refresh();
+    }
+
+    private void OnUnboundedModeChanged(bool unbounded)
+    {
+        _suppressViewRefresh = unbounded;
+        _runner.Mode = unbounded ? AlgorithmRunner.RunMode.Unbounded : AlgorithmRunner.RunMode.Throttled;
     }
 }

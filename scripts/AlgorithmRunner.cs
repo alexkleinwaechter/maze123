@@ -17,7 +17,14 @@ public partial class AlgorithmRunner : Node
     [Signal] public delegate void GenerationFinishedEventHandler();
     [Signal] public delegate void SolverFinishedEventHandler();
 
+    public enum RunMode
+    {
+        Throttled,
+        Unbounded
+    }
+
     public float StepsPerSecond { get; set; } = 30f;
+    public RunMode Mode { get; set; } = RunMode.Throttled;
     public bool IsPaused { get; set; }
     public bool IsRunning => _genIterator != null || _solverIterator != null;
 
@@ -79,6 +86,12 @@ public partial class AlgorithmRunner : Node
             return;
         }
 
+        if (Mode == RunMode.Unbounded)
+        {
+            DrainAllInOneFrame();
+            return;
+        }
+
         _accumulator += delta;
         double secondsPerStep = 1.0 / Mathf.Max(1f, StepsPerSecond);
 
@@ -95,7 +108,21 @@ public partial class AlgorithmRunner : Node
             if (_solverIterator != null)
             {
                 AdvanceSolver();
+                continue;
             }
+        }
+    }
+
+    private void DrainAllInOneFrame()
+    {
+        while (_genIterator != null)
+        {
+            AdvanceGenerator();
+        }
+
+        while (_solverIterator != null)
+        {
+            AdvanceSolver();
         }
     }
 
