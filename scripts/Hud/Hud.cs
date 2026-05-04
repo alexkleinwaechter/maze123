@@ -14,9 +14,12 @@ public partial class Hud : CanvasLayer
     [Signal] public delegate void UnboundedModeChangedEventHandler(bool unbounded);
     [Signal] public delegate void ViewToggleRequestedEventHandler(bool use3D);
     [Signal] public delegate void HeatmapToggleEventHandler(bool enabled);
+    [Signal] public delegate void FollowCamToggleEventHandler(bool enabled);
+    [Signal] public delegate void ExploreModeToggleEventHandler(bool enabled);
     [Signal] public delegate void PauseToggleEventHandler(bool paused);
     [Signal] public delegate void StepRequestedEventHandler();
     [Signal] public delegate void ResetRequestedEventHandler();
+    [Signal] public delegate void PlayManualToggleEventHandler(bool active);
 
     private HSlider _widthSlider = null!;
     private HSlider _heightSlider = null!;
@@ -30,12 +33,16 @@ public partial class Hud : CanvasLayer
     private Button _pauseButton = null!;
     private Button _stepButton = null!;
     private Button _resetButton = null!;
+    private Button _playManualButton = null!;
     private CheckBox _viewToggle = null!;
     private CheckBox _heatmapToggle = null!;
+    private CheckBox _followCamToggle = null!;
+    private CheckBox _exploreModeToggle = null!;
     private CheckBox _unboundedToggle = null!;
     private Label _widthLabel = null!;
     private Label _heightLabel = null!;
     private Label _speedLabel = null!;
+    private Label _victoryLabel = null!;
 
     public override void _Ready()
     {
@@ -51,12 +58,16 @@ public partial class Hud : CanvasLayer
         _pauseButton = GetNode<Button>("Root/Margin/VBox/Buttons/PauseButton");
         _stepButton = GetNode<Button>("Root/Margin/VBox/Buttons/StepButton");
         _resetButton = GetNode<Button>("Root/Margin/VBox/Buttons/ResetButton");
+        _playManualButton = GetNode<Button>("Root/Margin/VBox/Buttons/PlayManualButton");
         _viewToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/View3DToggle");
         _heatmapToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/HeatmapToggle");
+        _followCamToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/FollowCamToggle");
+        _exploreModeToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/ExploreModeToggle");
         _widthLabel = GetNode<Label>("Root/Margin/VBox/Sizes/WidthLabel");
         _heightLabel = GetNode<Label>("Root/Margin/VBox/Sizes/HeightLabel");
         _speedLabel = GetNode<Label>("Root/Margin/VBox/SpeedRow/SpeedLabel");
         _unboundedToggle = GetNode<CheckBox>("Root/Margin/VBox/SpeedRow/UnboundedToggle");
+        _victoryLabel = GetNode<Label>("Root/Margin/VBox/VictoryLabel");
 
         _widthSlider.MinValue = 5;
         _widthSlider.MaxValue = 1000;
@@ -112,8 +123,11 @@ public partial class Hud : CanvasLayer
         _pauseButton.Toggled += OnPauseToggled;
         _stepButton.Pressed += OnStepPressed;
         _resetButton.Pressed += OnResetPressed;
+        _playManualButton.Toggled += OnPlayManualToggled;
         _viewToggle.Toggled += OnViewToggled;
         _heatmapToggle.Toggled += OnHeatmapToggled;
+        _followCamToggle.Toggled += OnFollowCamToggled;
+        _exploreModeToggle.Toggled += OnExploreModeToggled;
 
         FillGeneratorChooser();
         FillSolverChooser();
@@ -171,9 +185,19 @@ public partial class Hud : CanvasLayer
 
     private void OnResetPressed() => EmitSignal(SignalName.ResetRequested);
 
+    private void OnPlayManualToggled(bool active)
+    {
+        _victoryLabel.Text = string.Empty;
+        EmitSignal(SignalName.PlayManualToggle, active);
+    }
+
     private void OnViewToggled(bool pressed) => EmitSignal(SignalName.ViewToggleRequested, pressed);
 
     private void OnHeatmapToggled(bool enabled) => EmitSignal(SignalName.HeatmapToggle, enabled);
+
+    private void OnFollowCamToggled(bool enabled) => EmitSignal(SignalName.FollowCamToggle, enabled);
+
+    private void OnExploreModeToggled(bool enabled) => EmitSignal(SignalName.ExploreModeToggle, enabled);
 
     private void FillGeneratorChooser()
     {
@@ -210,4 +234,22 @@ public partial class Hud : CanvasLayer
         _solverChooser.AddItem(label);
         _solverChooser.SetItemMetadata(index, id);
     }
+
+    public void ShowVictory(double seconds)
+    {
+        _victoryLabel.Text = $"Geschafft in {seconds:0.00} s!";
+        _playManualButton.SetPressedNoSignal(false);
+    }
+
+    public void SetManualPlayActive(bool active) =>
+        _playManualButton.SetPressedNoSignal(active);
+
+    public void SetFollowCamActive(bool active) =>
+        _followCamToggle.SetPressedNoSignal(active);
+
+    public void SetExploreModeActive(bool active) =>
+        _exploreModeToggle.SetPressedNoSignal(active);
+
+    public void SetUse3DActive(bool active) =>
+        _viewToggle.SetPressedNoSignal(active);
 }
