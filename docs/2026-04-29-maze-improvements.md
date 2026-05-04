@@ -6,7 +6,7 @@
 >
 > **Vorläufer-Spec:** [`docs/superpowers/specs/2026-04-29-maze-improvements-design.md`](../specs/2026-04-29-maze-improvements-design.md)
 >
-> **Vorläufer-Plan:** [`docs/superpowers/plans/2026-04-28-maze-school-project.md`](2026-04-28-maze-school-project.md) (Phasen 0–11).
+> **Vorläufer-Plan:** [`docs/2026-04-28-maze-school-project.md`](2026-04-28-maze-school-project.md) (Phasen 0–11).
 
 **Goal:** Drei Implementierungsverbesserungen am laufenden Maze-Projekt umsetzen — Maze-Größe bis 1000×1000 (mit Slider+SpinBox-Steuerung und Render-Performance-Refactor), "Ohne Tempolimit"-Modus für ungebremste Erzeugung/Lösung, frei steuerbare 3D-Kamera mit WASD/QE/Shift/Maus/Mausrad und Auto-Fit pro Maze.
 
