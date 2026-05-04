@@ -13,6 +13,9 @@ namespace Maze;
 
 public partial class Main : Node
 {
+    private const float DefaultStepsPerSecond = 30f;
+    private const float MaxSimulationSpeed = 100001f;
+
     private Hud _hud = null!;
     private StatsPanel _stats = null!;
     private MazeView2D _view2D = null!;
@@ -76,7 +79,7 @@ public partial class Main : Node
         _runner.GenerationFinished += OnGenerationFinished;
         _runner.SolverStepProduced += OnSolverStepProduced;
         _runner.SolverFinished += OnSolverFinished;
-        _runner.StepsPerSecond = 30f;
+        ApplySimulationSpeed(DefaultStepsPerSecond);
 
         GD.Print("[Main] HUD, 2D-View und 3D-View verbunden.");
     }
@@ -267,7 +270,7 @@ public partial class Main : Node
     }
 
     private void OnSpeedChanged(float stepsPerSecond) =>
-        _runner.StepsPerSecond = stepsPerSecond;
+        ApplySimulationSpeed(stepsPerSecond);
 
     private void OnPauseToggled(bool paused) =>
         _runner.IsPaused = paused;
@@ -281,11 +284,18 @@ public partial class Main : Node
         _solverPath.Clear();
         _player.Hide();
         _view3D.GetNode<CameraController3D>("Camera3D").DisableFollow();
-        _currentMaze = null;
-        _lastMazeBuiltFor3D = null;
-        _view2D.SetMaze(new global::Maze.Model.Maze(2, 2));
-        _view3D.ClearMaze();
-        GD.Print("[Main] Reset.");
+
+        if (_currentMaze is null)
+        {
+            GD.Print("[Main] Reset ignoriert: Kein Maze geladen.");
+            return;
+        }
+
+        _currentMaze.ResetSolverState();
+        _view2D.ForceRefresh();
+        _view3D.Refresh();
+        _stats.UpdateStats(TimeSpan.Zero, 0, 0, 0, 0);
+        GD.Print("[Main] Solver-Zustand zurueckgesetzt.");
     }
 
     private void OnViewToggled(bool use3D)
@@ -331,6 +341,12 @@ public partial class Main : Node
     private void OnBotGoalReached()
     {
         GD.Print("[Main] Bot ist am Ziel angekommen.");
+    }
+
+    private void ApplySimulationSpeed(float stepsPerSecond)
+    {
+        _runner.StepsPerSecond = stepsPerSecond;
+        _player.MoveSpeed = Mathf.Clamp(stepsPerSecond, 0.5f, MaxSimulationSpeed);
     }
 
     private static bool AreNeighbors(Cell a, Cell b) =>

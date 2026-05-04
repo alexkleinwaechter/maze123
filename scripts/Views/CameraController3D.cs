@@ -258,8 +258,8 @@ public partial class CameraController3D : Camera3D
 
         if (@event is InputEventMouseMotion motion && _mouseLook)
         {
-            _followOrbitYaw -= motion.Relative.X * MouseSensitivity;
-            _followOrbitPitch = Mathf.Clamp(_followOrbitPitch - motion.Relative.Y * MouseSensitivity, 0.05f, Mathf.Pi / 2f - 0.05f);
+            _followOrbitYaw += motion.Relative.X * MouseSensitivity;
+            _followOrbitPitch = Mathf.Clamp(_followOrbitPitch + motion.Relative.Y * MouseSensitivity, 0.05f, Mathf.Pi / 2f - 0.05f);
         }
     }
 }
