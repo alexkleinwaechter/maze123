@@ -50,6 +50,9 @@ public partial class Main : Node
     private readonly PerformanceTracker _tracker = new();
     private bool _suppressViewRefresh;
     private bool _followCamEnabled;
+    private bool _followCamEnabledBeforeManual;
+    private bool _isManualMode;
+    private double _manualStartTimeSeconds;
 
     public override void _Ready()
     {
@@ -69,6 +72,7 @@ public partial class Main : Node
         _hud.PauseToggle += OnPauseToggled;
         _hud.StepRequested += OnStepRequested;
         _hud.ResetRequested += OnResetRequested;
+        _hud.PlayManualToggle += OnPlayManualToggle;
         _hud.ViewToggleRequested += OnViewToggled;
         _hud.HeatmapToggle += OnHeatmapToggled;
         _hud.FollowCamToggle += OnFollowCamToggled;
@@ -104,6 +108,8 @@ public partial class Main : Node
 
     private void OnGenerateRequested(int width, int height, string generatorId)
     {
+        OnStopManualRequested();
+
         if (!_generators.TryGetValue(generatorId, out IMazeGenerator? generator))
         {
             GD.PrintErr($"Unbekannter Generator: {generatorId}");
@@ -167,6 +173,8 @@ public partial class Main : Node
 
     private void OnSolveRequested(string solverId)
     {
+        OnStopManualRequested();
+
         if (_currentMaze is null)
         {
             GD.PrintErr("Kein Maze.");
@@ -280,6 +288,7 @@ public partial class Main : Node
 
     private void OnResetRequested()
     {
+        OnStopManualRequested();
         _runner.StopAll();
         _solverPath.Clear();
         _player.Hide();
@@ -300,6 +309,12 @@ public partial class Main : Node
 
     private void OnViewToggled(bool use3D)
     {
+        if (_isManualMode && !use3D)
+        {
+            _hud.SetUse3DActive(true);
+            return;
+        }
+
         _view2D.Visible = !use3D;
         _view3D.Visible = use3D;
 
@@ -320,6 +335,14 @@ public partial class Main : Node
 
     private void OnFollowCamToggled(bool enabled)
     {
+        if (_isManualMode)
+        {
+            _followCamEnabled = true;
+            _hud.SetFollowCamActive(true);
+            _view3D.GetNode<CameraController3D>("Camera3D").EnableFollow(_player);
+            return;
+        }
+
         _followCamEnabled = enabled;
 
         CameraController3D camera = _view3D.GetNode<CameraController3D>("Camera3D");
@@ -340,7 +363,82 @@ public partial class Main : Node
 
     private void OnBotGoalReached()
     {
+        if (_isManualMode)
+        {
+            double elapsed = Time.GetTicksMsec() / 1000.0 - _manualStartTimeSeconds;
+            _hud.ShowVictory(elapsed);
+            OnStopManualRequested();
+            return;
+        }
+
         GD.Print("[Main] Bot ist am Ziel angekommen.");
+    }
+
+    private void OnPlayManualToggle(bool active)
+    {
+        if (active)
+        {
+            OnPlayManualRequested();
+            return;
+        }
+
+        OnStopManualRequested();
+    }
+
+    private void OnPlayManualRequested()
+    {
+        if (_currentMaze is null)
+        {
+            GD.PrintErr("[Main] Kein Maze - bitte erst Erstellen.");
+            _hud.SetManualPlayActive(false);
+            return;
+        }
+
+        _runner.StopAll();
+        _solverPath.Clear();
+        _currentMaze.ResetSolverState();
+        _solverStart = _currentMaze.GetCell(0, 0);
+        _solverGoal = _currentMaze.GetCell(_currentMaze.Width - 1, _currentMaze.Height - 1);
+        _solverStart.State = CellState.Start;
+        _solverGoal.State = CellState.Goal;
+        _view2D.ForceRefresh();
+        _view3D.SetMaze(_currentMaze);
+        _lastMazeBuiltFor3D = _currentMaze;
+
+        _hud.SetUse3DActive(true);
+        OnViewToggled(true);
+
+        CameraController3D camera = _view3D.GetNode<CameraController3D>("Camera3D");
+        _player.EnableManualMode(_currentMaze, _solverStart, _solverGoal, _view3D.CellSize, camera);
+        _isManualMode = true;
+        _manualStartTimeSeconds = Time.GetTicksMsec() / 1000.0;
+
+        _followCamEnabledBeforeManual = _followCamEnabled;
+        _followCamEnabled = true;
+        _hud.SetFollowCamActive(true);
+        camera.EnableFollow(_player);
+
+        GD.Print("[Main] Selbst spielen aktiviert.");
+    }
+
+    private void OnStopManualRequested()
+    {
+        if (!_isManualMode)
+        {
+            _hud.SetManualPlayActive(false);
+            return;
+        }
+
+        _player.DisableManualMode();
+        _isManualMode = false;
+
+        CameraController3D camera = _view3D.GetNode<CameraController3D>("Camera3D");
+        camera.DisableFollow();
+
+        _followCamEnabled = _followCamEnabledBeforeManual;
+        _hud.SetFollowCamActive(_followCamEnabled);
+        _hud.SetManualPlayActive(false);
+        GD.Print("[Main] Selbst spielen beendet.");
     }
 
     private void ApplySimulationSpeed(float stepsPerSecond)

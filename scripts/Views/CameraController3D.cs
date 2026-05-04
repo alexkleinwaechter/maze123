@@ -1,6 +1,7 @@
 #nullable enable
 
 using Godot;
+using Maze.Model;
 
 namespace Maze.Views;
 
@@ -34,6 +35,7 @@ public partial class CameraController3D : Camera3D
 
     public override void _Ready()
     {
+        ProcessPriority = 10;
         Vector3 euler = Basis.GetEuler();
         _pitch = euler.X;
         _yaw = euler.Y;
@@ -59,17 +61,17 @@ public partial class CameraController3D : Camera3D
 
     private void HandleMovement(double delta)
     {
-        Vector3 input = Vector3.Zero;
-        if (Input.IsPhysicalKeyPressed(Key.W)) input += Vector3.Forward;
-        if (Input.IsPhysicalKeyPressed(Key.S)) input += Vector3.Back;
-        if (Input.IsPhysicalKeyPressed(Key.A)) input += Vector3.Left;
-        if (Input.IsPhysicalKeyPressed(Key.D)) input += Vector3.Right;
+        Vector2 input = Vector2.Zero;
+        if (Input.IsPhysicalKeyPressed(Key.W)) input.Y += 1f;
+        if (Input.IsPhysicalKeyPressed(Key.S)) input.Y -= 1f;
+        if (Input.IsPhysicalKeyPressed(Key.A)) input.X -= 1f;
+        if (Input.IsPhysicalKeyPressed(Key.D)) input.X += 1f;
 
         Vector3 worldVertical = Vector3.Zero;
         if (Input.IsPhysicalKeyPressed(Key.E)) worldVertical += Vector3.Up;
         if (Input.IsPhysicalKeyPressed(Key.Q)) worldVertical += Vector3.Down;
 
-        if (input == Vector3.Zero && worldVertical == Vector3.Zero)
+        if (input == Vector2.Zero && worldVertical == Vector3.Zero)
         {
             return;
         }
@@ -80,9 +82,16 @@ public partial class CameraController3D : Camera3D
             speed *= SprintMultiplier;
         }
 
-        if (input != Vector3.Zero)
+        if (input != Vector2.Zero)
         {
-            Translate(input.Normalized() * speed * (float)delta);
+            Vector3 forward = FlattenToGround(-GlobalBasis.Z);
+            Vector3 right = FlattenToGround(GlobalBasis.X);
+            Vector3 moveDirection = (right * input.X + forward * input.Y).Normalized();
+
+            if (moveDirection != Vector3.Zero)
+            {
+                GlobalPosition += moveDirection * speed * (float)delta;
+            }
         }
 
         if (worldVertical != Vector3.Zero)
@@ -107,6 +116,25 @@ public partial class CameraController3D : Camera3D
     private void ApplyRotation()
     {
         Basis = Basis.FromEuler(new Vector3(_pitch, _yaw, 0f));
+    }
+
+    public Direction GetFacingDirectionForInput()
+    {
+        Vector2 input = Vector2.Zero;
+        if (Input.IsPhysicalKeyPressed(Key.W)) input.Y += 1f;
+        if (Input.IsPhysicalKeyPressed(Key.S)) input.Y -= 1f;
+        if (Input.IsPhysicalKeyPressed(Key.A)) input.X -= 1f;
+        if (Input.IsPhysicalKeyPressed(Key.D)) input.X += 1f;
+
+        if (input == Vector2.Zero)
+        {
+            return Direction.North;
+        }
+
+        Vector3 forward = FlattenToGround(-GlobalBasis.Z);
+        Vector3 right = FlattenToGround(GlobalBasis.X);
+        Vector3 desired = (right * input.X + forward * input.Y).Normalized();
+        return WorldVectorToDirection(desired);
     }
 
     public override void _UnhandledInput(InputEvent @event)
@@ -261,5 +289,21 @@ public partial class CameraController3D : Camera3D
             _followOrbitYaw += motion.Relative.X * MouseSensitivity;
             _followOrbitPitch = Mathf.Clamp(_followOrbitPitch + motion.Relative.Y * MouseSensitivity, 0.05f, Mathf.Pi / 2f - 0.05f);
         }
+    }
+
+    private static Vector3 FlattenToGround(Vector3 vector)
+    {
+        Vector3 flattened = new(vector.X, 0f, vector.Z);
+        return flattened.LengthSquared() > 0.0001f ? flattened.Normalized() : Vector3.Zero;
+    }
+
+    private static Direction WorldVectorToDirection(Vector3 direction)
+    {
+        if (Mathf.Abs(direction.X) >= Mathf.Abs(direction.Z))
+        {
+            return direction.X >= 0f ? Direction.East : Direction.West;
+        }
+
+        return direction.Z >= 0f ? Direction.South : Direction.North;
     }
 }

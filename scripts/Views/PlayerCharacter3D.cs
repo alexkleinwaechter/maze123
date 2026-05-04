@@ -1,3 +1,5 @@
+#nullable enable
+
 using System.Collections.Generic;
 using Godot;
 using Maze.Model;
@@ -15,18 +17,40 @@ public partial class PlayerCharacter3D : Node3D
     [Export] public float MoveSpeed = 4f;
     [Export] public float StandHeight = 0.5f;
 
+    public enum Mode
+    {
+        Idle,
+        FollowingPath,
+        Manual
+    }
+
     private readonly List<Vector3> _waypoints = new();
     private int _currentIndex;
     private bool _isMoving;
     private float _cellSize = 1f;
+    private global::Maze.Model.Maze? _manualMaze;
+    private Cell? _manualCell;
+    private Cell? _manualGoal;
+    private CameraController3D? _manualCamera;
+    private bool _isAnimatingCell;
+    private Vector3 _animFrom;
+    private Vector3 _animTo;
+    private float _animElapsed;
+    private float _animDuration;
 
     public bool IsMoving => _isMoving;
+    public Mode CurrentMode { get; private set; } = Mode.Idle;
 
     public new void Hide()
     {
         _waypoints.Clear();
         _currentIndex = 0;
         _isMoving = false;
+        _manualMaze = null;
+        _manualCell = null;
+        _manualGoal = null;
+        _isAnimatingCell = false;
+        CurrentMode = Mode.Idle;
         Visible = false;
     }
 
@@ -39,6 +63,8 @@ public partial class PlayerCharacter3D : Node3D
         {
             _waypoints.Add(CellToWorld(cell));
         }
+
+        CurrentMode = Mode.FollowingPath;
 
         if (_waypoints.Count == 0)
         {
@@ -53,11 +79,56 @@ public partial class PlayerCharacter3D : Node3D
 
         if (!_isMoving)
         {
+            CurrentMode = Mode.Idle;
             EmitSignal(SignalName.GoalReached);
         }
     }
 
+    public void EnableManualMode(global::Maze.Model.Maze maze, Cell start, Cell goal, float cellSize, CameraController3D camera)
+    {
+        _cellSize = cellSize;
+        _manualMaze = maze;
+        _manualCell = start;
+        _manualGoal = goal;
+        _manualCamera = camera;
+        _isAnimatingCell = false;
+        _waypoints.Clear();
+        _currentIndex = 0;
+        _isMoving = false;
+
+        Position = CellToWorld(start);
+        Visible = true;
+        CurrentMode = Mode.Manual;
+    }
+
+    public void DisableManualMode()
+    {
+        _manualMaze = null;
+        _manualCell = null;
+        _manualGoal = null;
+        _manualCamera = null;
+        _isAnimatingCell = false;
+        _waypoints.Clear();
+        _currentIndex = 0;
+        _isMoving = false;
+        Visible = false;
+        CurrentMode = Mode.Idle;
+    }
+
     public override void _Process(double delta)
+    {
+        switch (CurrentMode)
+        {
+            case Mode.FollowingPath:
+                ProcessFollowPath(delta);
+                break;
+            case Mode.Manual:
+                ProcessManual(delta);
+                break;
+        }
+    }
+
+    private void ProcessFollowPath(double delta)
     {
         if (!_isMoving)
         {
@@ -76,6 +147,7 @@ public partial class PlayerCharacter3D : Node3D
             if (_currentIndex >= _waypoints.Count)
             {
                 _isMoving = false;
+                CurrentMode = Mode.Idle;
                 EmitSignal(SignalName.GoalReached);
             }
 
@@ -83,6 +155,59 @@ public partial class PlayerCharacter3D : Node3D
         }
 
         Position += toTarget.Normalized() * step;
+    }
+
+    private void ProcessManual(double delta)
+    {
+        if (_manualMaze is null || _manualCell is null || _manualGoal is null || _manualCamera is null)
+        {
+            CurrentMode = Mode.Idle;
+            return;
+        }
+
+        if (_isAnimatingCell)
+        {
+            _animElapsed += (float)delta;
+            float t = Mathf.Clamp(_animElapsed / _animDuration, 0f, 1f);
+            Position = _animFrom.Lerp(_animTo, t);
+
+            if (t >= 1f)
+            {
+                _isAnimatingCell = false;
+                Position = _animTo;
+                if (_manualCell == _manualGoal)
+                {
+                    CurrentMode = Mode.Idle;
+                    EmitSignal(SignalName.GoalReached);
+                }
+            }
+
+            return;
+        }
+
+        Direction? direction = null;
+        if (Input.IsPhysicalKeyPressed(Key.W) || Input.IsPhysicalKeyPressed(Key.S) || Input.IsPhysicalKeyPressed(Key.A) || Input.IsPhysicalKeyPressed(Key.D))
+        {
+            direction = _manualCamera.GetFacingDirectionForInput();
+        }
+
+        if (direction is null || _manualCell.HasWall(direction.Value))
+        {
+            return;
+        }
+
+        Cell? next = _manualMaze.GetNeighbor(_manualCell, direction.Value);
+        if (next is null)
+        {
+            return;
+        }
+
+        _animFrom = Position;
+        _animTo = CellToWorld(next);
+        _animElapsed = 0f;
+        _animDuration = 1f / Mathf.Max(0.5f, MoveSpeed);
+        _isAnimatingCell = true;
+        _manualCell = next;
     }
 
     private Vector3 CellToWorld(Cell cell) =>
