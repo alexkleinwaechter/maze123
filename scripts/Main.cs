@@ -416,7 +416,7 @@ public partial class Main : Node
         _followCamEnabledBeforeManual = _followCamEnabled;
         _followCamEnabled = true;
         _hud.SetFollowCamActive(true);
-        camera.EnableFollow(_player);
+        camera.EnableFollow(_player, true);
 
         GD.Print("[Main] Selbst spielen aktiviert.");
     }

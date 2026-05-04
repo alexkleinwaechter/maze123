@@ -205,13 +205,30 @@ public partial class CameraController3D : Camera3D
         _yaw = euler.Y;
     }
 
-    public void EnableFollow(Node3D target)
+    public void EnableFollow(Node3D target, bool snapImmediately = false)
     {
         _followTarget = target;
         FollowMode = true;
-        _followOrbitRadius = Mathf.Sqrt(FollowHeight * FollowHeight + FollowDistance * FollowDistance);
-        _followOrbitPitch = Mathf.Atan2(FollowHeight, FollowDistance);
-        _followOrbitYaw = 0f;
+
+        Vector3 offset = GlobalPosition - target.GlobalPosition;
+        if (offset.LengthSquared() > 0.0001f)
+        {
+            _followOrbitRadius = offset.Length();
+            float horizontalDistance = new Vector2(offset.X, offset.Z).Length();
+            _followOrbitPitch = Mathf.Clamp(Mathf.Atan2(offset.Y, horizontalDistance), 0.05f, Mathf.Pi / 2f - 0.05f);
+            _followOrbitYaw = Mathf.Atan2(offset.X, offset.Z);
+        }
+        else
+        {
+            _followOrbitRadius = Mathf.Sqrt(FollowHeight * FollowHeight + FollowDistance * FollowDistance);
+            _followOrbitPitch = Mathf.Atan2(FollowHeight, FollowDistance);
+            _followOrbitYaw = 0f;
+        }
+
+        if (snapImmediately)
+        {
+            SnapFollowToTarget();
+        }
 
         if (_mouseLook)
         {
@@ -239,13 +256,14 @@ public partial class CameraController3D : Camera3D
             return;
         }
 
+        if (_followTarget is PlayerCharacter3D player && !player.IsMoving)
+        {
+            SnapFollowToTarget();
+            return;
+        }
+
         Vector3 targetPos = _followTarget.GlobalPosition;
-        float cosPitch = Mathf.Cos(_followOrbitPitch);
-        float sinPitch = Mathf.Sin(_followOrbitPitch);
-        Vector3 orbitOffset = new Vector3(
-            Mathf.Sin(_followOrbitYaw) * cosPitch,
-            sinPitch,
-            Mathf.Cos(_followOrbitYaw) * cosPitch) * _followOrbitRadius;
+        Vector3 orbitOffset = GetFollowOrbitOffset();
 
         float lerpFactor = 1f - Mathf.Exp(-FollowSmoothing * (float)delta);
         GlobalPosition = GlobalPosition.Lerp(targetPos + orbitOffset, lerpFactor);
@@ -289,6 +307,32 @@ public partial class CameraController3D : Camera3D
             _followOrbitYaw += motion.Relative.X * MouseSensitivity;
             _followOrbitPitch = Mathf.Clamp(_followOrbitPitch + motion.Relative.Y * MouseSensitivity, 0.05f, Mathf.Pi / 2f - 0.05f);
         }
+    }
+
+    private void SnapFollowToTarget()
+    {
+        if (_followTarget is null)
+        {
+            return;
+        }
+
+        Vector3 targetPos = _followTarget.GlobalPosition;
+        GlobalPosition = targetPos + GetFollowOrbitOffset();
+        LookAt(targetPos + new Vector3(0f, 0.3f, 0f), Vector3.Up);
+
+        Vector3 euler = Basis.GetEuler();
+        _pitch = euler.X;
+        _yaw = euler.Y;
+    }
+
+    private Vector3 GetFollowOrbitOffset()
+    {
+        float cosPitch = Mathf.Cos(_followOrbitPitch);
+        float sinPitch = Mathf.Sin(_followOrbitPitch);
+        return new Vector3(
+            Mathf.Sin(_followOrbitYaw) * cosPitch,
+            sinPitch,
+            Mathf.Cos(_followOrbitYaw) * cosPitch) * _followOrbitRadius;
     }
 
     private static Vector3 FlattenToGround(Vector3 vector)
