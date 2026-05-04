@@ -1,3 +1,5 @@
+#nullable enable
+
 using Godot;
 
 namespace Maze.Views;
@@ -16,10 +18,19 @@ public partial class CameraController3D : Camera3D
     [Export] public float KeyTurnSpeed = 1.5f;
     [Export] public float ZoomStep = 1.5f;
     [Export] public float ZoomSprintMultiplier = 3f;
+    [Export] public float FollowDistance = 4.5f;
+    [Export] public float FollowHeight = 3.0f;
+    [Export] public float FollowSmoothing = 6.0f;
 
     private float _yaw;
     private float _pitch;
     private bool _mouseLook;
+    private Node3D? _followTarget;
+    private float _followOrbitYaw;
+    private float _followOrbitPitch;
+    private float _followOrbitRadius;
+
+    public bool FollowMode { get; private set; }
 
     public override void _Ready()
     {
@@ -30,6 +41,17 @@ public partial class CameraController3D : Camera3D
 
     public override void _Process(double delta)
     {
+        if (!IsVisibleInTree())
+        {
+            return;
+        }
+
+        if (FollowMode && _followTarget is not null)
+        {
+            UpdateFollowCamera(delta);
+            return;
+        }
+
         HandleMovement(delta);
         HandleKeyboardLook(delta);
         ApplyRotation();
@@ -89,6 +111,17 @@ public partial class CameraController3D : Camera3D
 
     public override void _UnhandledInput(InputEvent @event)
     {
+        if (!IsVisibleInTree())
+        {
+            return;
+        }
+
+        if (FollowMode)
+        {
+            HandleFollowInput(@event);
+            return;
+        }
+
         if (@event is InputEventMouseButton mouseButton)
         {
             if (mouseButton.ButtonIndex == MouseButton.Right)
@@ -142,5 +175,91 @@ public partial class CameraController3D : Camera3D
         Vector3 euler = Basis.GetEuler();
         _pitch = euler.X;
         _yaw = euler.Y;
+    }
+
+    public void EnableFollow(Node3D target)
+    {
+        _followTarget = target;
+        FollowMode = true;
+        _followOrbitRadius = Mathf.Sqrt(FollowHeight * FollowHeight + FollowDistance * FollowDistance);
+        _followOrbitPitch = Mathf.Atan2(FollowHeight, FollowDistance);
+        _followOrbitYaw = 0f;
+
+        if (_mouseLook)
+        {
+            _mouseLook = false;
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+        }
+    }
+
+    public void DisableFollow()
+    {
+        _followTarget = null;
+        FollowMode = false;
+
+        if (_mouseLook)
+        {
+            _mouseLook = false;
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+        }
+    }
+
+    private void UpdateFollowCamera(double delta)
+    {
+        if (_followTarget is null)
+        {
+            return;
+        }
+
+        Vector3 targetPos = _followTarget.GlobalPosition;
+        float cosPitch = Mathf.Cos(_followOrbitPitch);
+        float sinPitch = Mathf.Sin(_followOrbitPitch);
+        Vector3 orbitOffset = new Vector3(
+            Mathf.Sin(_followOrbitYaw) * cosPitch,
+            sinPitch,
+            Mathf.Cos(_followOrbitYaw) * cosPitch) * _followOrbitRadius;
+
+        float lerpFactor = 1f - Mathf.Exp(-FollowSmoothing * (float)delta);
+        GlobalPosition = GlobalPosition.Lerp(targetPos + orbitOffset, lerpFactor);
+        LookAt(targetPos + new Vector3(0f, 0.3f, 0f), Vector3.Up);
+
+        Vector3 euler = Basis.GetEuler();
+        _pitch = euler.X;
+        _yaw = euler.Y;
+    }
+
+    private void HandleFollowInput(InputEvent @event)
+    {
+        if (@event is InputEventMouseButton mouseButton)
+        {
+            if (mouseButton.ButtonIndex == MouseButton.Right)
+            {
+                _mouseLook = mouseButton.Pressed;
+                Input.MouseMode = mouseButton.Pressed ? Input.MouseModeEnum.Captured : Input.MouseModeEnum.Visible;
+                return;
+            }
+
+            if (mouseButton.Pressed && (mouseButton.ButtonIndex == MouseButton.WheelUp || mouseButton.ButtonIndex == MouseButton.WheelDown))
+            {
+                float step = ZoomStep;
+                if (Input.IsPhysicalKeyPressed(Key.Shift))
+                {
+                    step *= ZoomSprintMultiplier;
+                }
+
+                _followOrbitRadius = Mathf.Clamp(
+                    _followOrbitRadius + (mouseButton.ButtonIndex == MouseButton.WheelUp ? -step : step),
+                    1f,
+                    200f);
+            }
+
+            return;
+        }
+
+        if (@event is InputEventMouseMotion motion && _mouseLook)
+        {
+            _followOrbitYaw -= motion.Relative.X * MouseSensitivity;
+            _followOrbitPitch = Mathf.Clamp(_followOrbitPitch - motion.Relative.Y * MouseSensitivity, 0.05f, Mathf.Pi / 2f - 0.05f);
+        }
     }
 }

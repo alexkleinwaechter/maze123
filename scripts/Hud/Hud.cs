@@ -14,6 +14,7 @@ public partial class Hud : CanvasLayer
     [Signal] public delegate void UnboundedModeChangedEventHandler(bool unbounded);
     [Signal] public delegate void ViewToggleRequestedEventHandler(bool use3D);
     [Signal] public delegate void HeatmapToggleEventHandler(bool enabled);
+    [Signal] public delegate void FollowCamToggleEventHandler(bool enabled);
     [Signal] public delegate void PauseToggleEventHandler(bool paused);
     [Signal] public delegate void StepRequestedEventHandler();
     [Signal] public delegate void ResetRequestedEventHandler();
@@ -32,6 +33,7 @@ public partial class Hud : CanvasLayer
     private Button _resetButton = null!;
     private CheckBox _viewToggle = null!;
     private CheckBox _heatmapToggle = null!;
+    private CheckBox _followCamToggle = null!;
     private CheckBox _unboundedToggle = null!;
     private Label _widthLabel = null!;
     private Label _heightLabel = null!;
@@ -53,6 +55,7 @@ public partial class Hud : CanvasLayer
         _resetButton = GetNode<Button>("Root/Margin/VBox/Buttons/ResetButton");
         _viewToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/View3DToggle");
         _heatmapToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/HeatmapToggle");
+        _followCamToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/FollowCamToggle");
         _widthLabel = GetNode<Label>("Root/Margin/VBox/Sizes/WidthLabel");
         _heightLabel = GetNode<Label>("Root/Margin/VBox/Sizes/HeightLabel");
         _speedLabel = GetNode<Label>("Root/Margin/VBox/SpeedRow/SpeedLabel");
@@ -114,6 +117,7 @@ public partial class Hud : CanvasLayer
         _resetButton.Pressed += OnResetPressed;
         _viewToggle.Toggled += OnViewToggled;
         _heatmapToggle.Toggled += OnHeatmapToggled;
+        _followCamToggle.Toggled += OnFollowCamToggled;
 
         FillGeneratorChooser();
         FillSolverChooser();
@@ -174,6 +178,8 @@ public partial class Hud : CanvasLayer
     private void OnViewToggled(bool pressed) => EmitSignal(SignalName.ViewToggleRequested, pressed);
 
     private void OnHeatmapToggled(bool enabled) => EmitSignal(SignalName.HeatmapToggle, enabled);
+
+    private void OnFollowCamToggled(bool enabled) => EmitSignal(SignalName.FollowCamToggle, enabled);
 
     private void FillGeneratorChooser()
     {
