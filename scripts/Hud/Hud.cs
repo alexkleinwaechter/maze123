@@ -15,6 +15,7 @@ public partial class Hud : CanvasLayer
     [Signal] public delegate void ViewToggleRequestedEventHandler(bool use3D);
     [Signal] public delegate void HeatmapToggleEventHandler(bool enabled);
     [Signal] public delegate void FollowCamToggleEventHandler(bool enabled);
+    [Signal] public delegate void ExploreModeToggleEventHandler(bool enabled);
     [Signal] public delegate void PauseToggleEventHandler(bool paused);
     [Signal] public delegate void StepRequestedEventHandler();
     [Signal] public delegate void ResetRequestedEventHandler();
@@ -36,6 +37,7 @@ public partial class Hud : CanvasLayer
     private CheckBox _viewToggle = null!;
     private CheckBox _heatmapToggle = null!;
     private CheckBox _followCamToggle = null!;
+    private CheckBox _exploreModeToggle = null!;
     private CheckBox _unboundedToggle = null!;
     private Label _widthLabel = null!;
     private Label _heightLabel = null!;
@@ -60,6 +62,7 @@ public partial class Hud : CanvasLayer
         _viewToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/View3DToggle");
         _heatmapToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/HeatmapToggle");
         _followCamToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/FollowCamToggle");
+        _exploreModeToggle = GetNode<CheckBox>("Root/Margin/VBox/Algos/ExploreModeToggle");
         _widthLabel = GetNode<Label>("Root/Margin/VBox/Sizes/WidthLabel");
         _heightLabel = GetNode<Label>("Root/Margin/VBox/Sizes/HeightLabel");
         _speedLabel = GetNode<Label>("Root/Margin/VBox/SpeedRow/SpeedLabel");
@@ -124,6 +127,7 @@ public partial class Hud : CanvasLayer
         _viewToggle.Toggled += OnViewToggled;
         _heatmapToggle.Toggled += OnHeatmapToggled;
         _followCamToggle.Toggled += OnFollowCamToggled;
+        _exploreModeToggle.Toggled += OnExploreModeToggled;
 
         FillGeneratorChooser();
         FillSolverChooser();
@@ -193,6 +197,8 @@ public partial class Hud : CanvasLayer
 
     private void OnFollowCamToggled(bool enabled) => EmitSignal(SignalName.FollowCamToggle, enabled);
 
+    private void OnExploreModeToggled(bool enabled) => EmitSignal(SignalName.ExploreModeToggle, enabled);
+
     private void FillGeneratorChooser()
     {
         _generatorChooser.Clear();
@@ -240,6 +246,9 @@ public partial class Hud : CanvasLayer
 
     public void SetFollowCamActive(bool active) =>
         _followCamToggle.SetPressedNoSignal(active);
+
+    public void SetExploreModeActive(bool active) =>
+        _exploreModeToggle.SetPressedNoSignal(active);
 
     public void SetUse3DActive(bool active) =>
         _viewToggle.SetPressedNoSignal(active);

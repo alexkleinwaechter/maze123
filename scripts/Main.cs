@@ -76,6 +76,7 @@ public partial class Main : Node
         _hud.ViewToggleRequested += OnViewToggled;
         _hud.HeatmapToggle += OnHeatmapToggled;
         _hud.FollowCamToggle += OnFollowCamToggled;
+        _hud.ExploreModeToggle += OnExploreModeToggled;
         _hud.UnboundedModeChanged += OnUnboundedModeChanged;
         _player.GoalReached += OnBotGoalReached;
 
@@ -120,6 +121,7 @@ public partial class Main : Node
         _runner.StopAll();
         _solverPath.Clear();
         _player.Hide();
+        ResetExploreMode();
         _view3D.GetNode<CameraController3D>("Camera3D").DisableFollow();
         _currentMaze = new global::Maze.Model.Maze(width, height);
         _lastMazeBuiltFor3D = null;
@@ -191,6 +193,7 @@ public partial class Main : Node
         _currentMaze.ResetSolverState();
         _solverPath.Clear();
         _player.Hide();
+        ResetExploreMode();
         _view3D.GetNode<CameraController3D>("Camera3D").DisableFollow();
         _solverStart = _currentMaze.GetCell(0, 0);
         _solverGoal = _currentMaze.GetCell(_currentMaze.Width - 1, _currentMaze.Height - 1);
@@ -292,6 +295,7 @@ public partial class Main : Node
         _runner.StopAll();
         _solverPath.Clear();
         _player.Hide();
+        ResetExploreMode();
         _view3D.GetNode<CameraController3D>("Camera3D").DisableFollow();
 
         if (_currentMaze is null)
@@ -331,6 +335,11 @@ public partial class Main : Node
     {
         _view2D.ShowDistances = enabled;
         _view2D.Refresh();
+    }
+
+    private void OnExploreModeToggled(bool enabled)
+    {
+        _view3D.SetExploreMode(enabled);
     }
 
     private void OnFollowCamToggled(bool enabled)
@@ -445,6 +454,12 @@ public partial class Main : Node
     {
         _runner.StepsPerSecond = stepsPerSecond;
         _player.MoveSpeed = Mathf.Clamp(stepsPerSecond, 0.5f, MaxSimulationSpeed);
+    }
+
+    private void ResetExploreMode()
+    {
+        _hud.SetExploreModeActive(false);
+        _view3D.SetExploreMode(false);
     }
 
     private static bool AreNeighbors(Cell a, Cell b) =>
