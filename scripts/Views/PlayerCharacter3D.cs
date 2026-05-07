@@ -15,7 +15,7 @@ public partial class PlayerCharacter3D : Node3D
     [Signal] public delegate void GoalReachedEventHandler();
 
     [Export] public float MoveSpeed = 4f;
-    [Export] public float StandHeight = 0.5f;
+    [Export] public float StandHeight = 0f;
 
     public enum Mode
     {
@@ -37,15 +37,22 @@ public partial class PlayerCharacter3D : Node3D
     private Vector3 _animTo;
     private float _animElapsed;
     private float _animDuration;
+    private LegoFigure? _figure;
 
     public bool IsMoving => _isMoving;
     public Mode CurrentMode { get; private set; } = Mode.Idle;
+
+    public override void _Ready()
+    {
+        _figure = GetNodeOrNull<LegoFigure>("Figure");
+    }
 
     public new void Hide()
     {
         _waypoints.Clear();
         _currentIndex = 0;
         _isMoving = false;
+        _figure?.SetWalking(false);
         _manualMaze = null;
         _manualCell = null;
         _manualGoal = null;
@@ -108,6 +115,7 @@ public partial class PlayerCharacter3D : Node3D
         _manualGoal = null;
         _manualCamera = null;
         _isAnimatingCell = false;
+        _figure?.SetWalking(false);
         _waypoints.Clear();
         _currentIndex = 0;
         _isMoving = false;
@@ -132,11 +140,15 @@ public partial class PlayerCharacter3D : Node3D
     {
         if (!_isMoving)
         {
+            _figure?.SetWalking(false);
             return;
         }
 
+        _figure?.SetWalking(true);
+
         Vector3 target = _waypoints[_currentIndex];
         Vector3 toTarget = target - Position;
+    FaceMovementDirection(toTarget);
         float remaining = toTarget.Length();
         float step = MoveSpeed * _cellSize * (float)delta;
 
@@ -147,6 +159,7 @@ public partial class PlayerCharacter3D : Node3D
             if (_currentIndex >= _waypoints.Count)
             {
                 _isMoving = false;
+                _figure?.SetWalking(false);
                 CurrentMode = Mode.Idle;
                 EmitSignal(SignalName.GoalReached);
             }
@@ -161,9 +174,12 @@ public partial class PlayerCharacter3D : Node3D
     {
         if (_manualMaze is null || _manualCell is null || _manualGoal is null || _manualCamera is null)
         {
+            _figure?.SetWalking(false);
             CurrentMode = Mode.Idle;
             return;
         }
+
+        _figure?.SetWalking(_isAnimatingCell);
 
         if (_isAnimatingCell)
         {
@@ -174,6 +190,7 @@ public partial class PlayerCharacter3D : Node3D
             if (t >= 1f)
             {
                 _isAnimatingCell = false;
+                _figure?.SetWalking(false);
                 Position = _animTo;
                 if (_manualCell == _manualGoal)
                 {
@@ -208,8 +225,20 @@ public partial class PlayerCharacter3D : Node3D
         _animDuration = 1f / Mathf.Max(0.5f, MoveSpeed);
         _isAnimatingCell = true;
         _manualCell = next;
+        FaceMovementDirection(_animTo - _animFrom);
     }
 
     private Vector3 CellToWorld(Cell cell) =>
         new(cell.X * _cellSize + _cellSize / 2f, StandHeight, cell.Y * _cellSize + _cellSize / 2f);
+
+    private void FaceMovementDirection(Vector3 movement)
+    {
+        Vector3 planarMovement = new(movement.X, 0f, movement.Z);
+        if (planarMovement.LengthSquared() <= 0.0001f)
+        {
+            return;
+        }
+
+        Rotation = new Vector3(0f, Mathf.Atan2(planarMovement.X, planarMovement.Z), 0f);
+    }
 }
