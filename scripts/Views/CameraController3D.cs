@@ -13,25 +13,33 @@ namespace Maze.Views;
 /// </summary>
 public partial class CameraController3D : Camera3D
 {
-    [Export] public float MoveSpeed = 8f;
+    [Export] public float MoveSpeed = 12f;
     [Export] public float SprintMultiplier = 2f;
     [Export] public float MouseSensitivity = 0.003f;
     [Export] public float KeyTurnSpeed = 1.5f;
-    [Export] public float ZoomStep = 1.5f;
+    [Export] public float ZoomStep = 2.4f;
     [Export] public float ZoomSprintMultiplier = 3f;
-    [Export] public float FollowDistance = 4.5f;
-    [Export] public float FollowHeight = 3.0f;
+    [Export] public float FollowDistance = 7.5f;
+    [Export] public float FollowHeight = 4.8f;
     [Export] public float FollowSmoothing = 6.0f;
+    [Export] public float FirstPersonForwardOffset = 0.02f;
+    [Export] public float FirstPersonSmoothing = 12.0f;
 
     private float _yaw;
     private float _pitch;
     private bool _mouseLook;
     private Node3D? _followTarget;
+    private PlayerCharacter3D? _firstPersonTarget;
     private float _followOrbitYaw;
     private float _followOrbitPitch;
     private float _followOrbitRadius;
+    private float _baseFieldOfView;
+    private float _firstPersonFieldOfViewOffset;
+    private Vector3 _externalShakeOffset;
+    private Vector3 _appliedShakeOffset;
 
     public bool FollowMode { get; private set; }
+    public bool FirstPersonMode { get; private set; }
 
     public override void _Ready()
     {
@@ -39,10 +47,13 @@ public partial class CameraController3D : Camera3D
         Vector3 euler = Basis.GetEuler();
         _pitch = euler.X;
         _yaw = euler.Y;
+        _baseFieldOfView = Fov;
     }
 
     public override void _Process(double delta)
     {
+        RemoveAppliedShakeOffset();
+
         if (!IsVisibleInTree())
         {
             return;
@@ -51,12 +62,22 @@ public partial class CameraController3D : Camera3D
         if (FollowMode && _followTarget is not null)
         {
             UpdateFollowCamera(delta);
+            ApplyExternalShakeOffset();
+            return;
+        }
+
+        if (FirstPersonMode && _firstPersonTarget is not null)
+        {
+            HandleKeyboardLook(delta);
+            UpdateFirstPersonCamera(delta);
+            ApplyExternalShakeOffset();
             return;
         }
 
         HandleMovement(delta);
         HandleKeyboardLook(delta);
         ApplyRotation();
+        ApplyExternalShakeOffset();
     }
 
     private void HandleMovement(double delta)
@@ -130,10 +151,19 @@ public partial class CameraController3D : Camera3D
         return WorldVectorToDirection(desired);
     }
 
+    public Vector3 GetGroundMoveDirectionForInput() =>
+        GetGroundMovementDirection(GetMoveInput());
+
     public override void _UnhandledInput(InputEvent @event)
     {
         if (!IsVisibleInTree())
         {
+            return;
+        }
+
+        if (FirstPersonMode)
+        {
+            HandleFirstPersonInput(@event);
             return;
         }
 
@@ -168,7 +198,7 @@ public partial class CameraController3D : Camera3D
 
         if (@event is InputEventMouseMotion motion && _mouseLook)
         {
-            _yaw += motion.Relative.X * MouseSensitivity;
+            _yaw -= motion.Relative.X * MouseSensitivity;
             _pitch = Mathf.Clamp(_pitch - motion.Relative.Y * MouseSensitivity, -1.4f, 1.4f);
         }
     }
@@ -182,10 +212,11 @@ public partial class CameraController3D : Camera3D
         }
     }
 
-    public void FitToMaze(global::Maze.Model.Maze maze)
+    public void FitToMaze(global::Maze.Model.Maze maze, float cellSize = 1f)
     {
-        float width = maze.Width;
-        float height = maze.Height;
+        float scaledCellSize = Mathf.Max(0.1f, cellSize);
+        float width = maze.Width * scaledCellSize;
+        float height = maze.Height * scaledCellSize;
         float centerX = width / 2f;
         float centerZ = height / 2f;
         float fitHeight = Mathf.Max(width, height) * 0.8f;
@@ -200,6 +231,7 @@ public partial class CameraController3D : Camera3D
 
     public void EnableFollow(Node3D target, bool snapImmediately = false)
     {
+        DisableFirstPerson();
         _followTarget = target;
         FollowMode = true;
 
@@ -242,6 +274,60 @@ public partial class CameraController3D : Camera3D
         }
     }
 
+    public void EnableFirstPerson(PlayerCharacter3D target, bool snapImmediately = false)
+    {
+        DisableFollow();
+        _firstPersonTarget = target;
+        FirstPersonMode = true;
+
+        if (target.CurrentMode != PlayerCharacter3D.Mode.Manual)
+        {
+            _yaw = target.GlobalRotation.Y;
+            _pitch = 0f;
+        }
+
+        if (snapImmediately)
+        {
+            SnapFirstPersonToTarget();
+        }
+
+        ApplyFieldOfView();
+
+        Input.MouseMode = Input.MouseModeEnum.Captured;
+        _mouseLook = false;
+    }
+
+    public void DisableFirstPerson()
+    {
+        _firstPersonTarget = null;
+        FirstPersonMode = false;
+        ApplyFieldOfView();
+
+        if (Input.MouseMode == Input.MouseModeEnum.Captured)
+        {
+            Input.MouseMode = Input.MouseModeEnum.Visible;
+        }
+
+        _mouseLook = false;
+    }
+
+    public void SetFieldOfView(float fieldOfView)
+    {
+        _baseFieldOfView = Mathf.Clamp(fieldOfView, 55f, 100f);
+        ApplyFieldOfView();
+    }
+
+    public void SetFirstPersonFieldOfViewOffset(float offset)
+    {
+        _firstPersonFieldOfViewOffset = Mathf.Clamp(offset, -20f, 0f);
+        ApplyFieldOfView();
+    }
+
+    public void SetExternalShakeOffset(Vector3 offset)
+    {
+        _externalShakeOffset = offset;
+    }
+
     private void UpdateFollowCamera(double delta)
     {
         if (_followTarget is null)
@@ -265,6 +351,28 @@ public partial class CameraController3D : Camera3D
         Vector3 euler = Basis.GetEuler();
         _pitch = euler.X;
         _yaw = euler.Y;
+    }
+
+    private void UpdateFirstPersonCamera(double delta)
+    {
+        if (_firstPersonTarget is null)
+        {
+            return;
+        }
+
+        if (_firstPersonTarget.CurrentMode != PlayerCharacter3D.Mode.Manual)
+        {
+            _yaw = _firstPersonTarget.GlobalRotation.Y;
+            _pitch = 0f;
+        }
+
+        Basis desiredBasis = Basis.FromEuler(new Vector3(_pitch, _yaw, 0f));
+        Vector3 forward = -desiredBasis.Z;
+        Vector3 targetPosition = _firstPersonTarget.GetEyeWorldPosition() + forward * FirstPersonForwardOffset;
+
+        float lerpFactor = 1f - Mathf.Exp(-FirstPersonSmoothing * (float)delta);
+        GlobalPosition = GlobalPosition.Lerp(targetPosition, lerpFactor);
+        Basis = desiredBasis;
     }
 
     private void HandleFollowInput(InputEvent @event)
@@ -302,6 +410,24 @@ public partial class CameraController3D : Camera3D
         }
     }
 
+    private void HandleFirstPersonInput(InputEvent @event)
+    {
+        if (@event is InputEventMouseMotion motion && Input.MouseMode == Input.MouseModeEnum.Captured)
+        {
+            _yaw -= motion.Relative.X * MouseSensitivity;
+            _pitch = Mathf.Clamp(_pitch - motion.Relative.Y * MouseSensitivity, -1.2f, 1.2f);
+            return;
+        }
+
+        if (@event is InputEventMouseButton mouseButton
+            && mouseButton.Pressed
+            && mouseButton.ButtonIndex == MouseButton.Left
+            && Input.MouseMode != Input.MouseModeEnum.Captured)
+        {
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+        }
+    }
+
     private void SnapFollowToTarget()
     {
         if (_followTarget is null)
@@ -318,6 +444,25 @@ public partial class CameraController3D : Camera3D
         _yaw = euler.Y;
     }
 
+    private void SnapFirstPersonToTarget()
+    {
+        if (_firstPersonTarget is null)
+        {
+            return;
+        }
+
+        if (_firstPersonTarget.CurrentMode != PlayerCharacter3D.Mode.Manual)
+        {
+            _yaw = _firstPersonTarget.GlobalRotation.Y;
+            _pitch = 0f;
+        }
+
+        Basis desiredBasis = Basis.FromEuler(new Vector3(_pitch, _yaw, 0f));
+        Vector3 forward = -desiredBasis.Z;
+        GlobalPosition = _firstPersonTarget.GetEyeWorldPosition() + forward * FirstPersonForwardOffset;
+        Basis = desiredBasis;
+    }
+
     private Vector3 GetFollowOrbitOffset()
     {
         float cosPitch = Mathf.Cos(_followOrbitPitch);
@@ -326,6 +471,34 @@ public partial class CameraController3D : Camera3D
             Mathf.Sin(_followOrbitYaw) * cosPitch,
             sinPitch,
             Mathf.Cos(_followOrbitYaw) * cosPitch) * _followOrbitRadius;
+    }
+
+    private void ApplyFieldOfView()
+    {
+        float effectiveOffset = FirstPersonMode ? _firstPersonFieldOfViewOffset : 0f;
+        Fov = Mathf.Clamp(_baseFieldOfView + effectiveOffset, 50f, 100f);
+    }
+
+    private void RemoveAppliedShakeOffset()
+    {
+        if (_appliedShakeOffset == Vector3.Zero)
+        {
+            return;
+        }
+
+        GlobalPosition -= _appliedShakeOffset;
+        _appliedShakeOffset = Vector3.Zero;
+    }
+
+    private void ApplyExternalShakeOffset()
+    {
+        if (_externalShakeOffset == Vector3.Zero)
+        {
+            return;
+        }
+
+        GlobalPosition += _externalShakeOffset;
+        _appliedShakeOffset = _externalShakeOffset;
     }
 
     private Vector2 GetMoveInput()

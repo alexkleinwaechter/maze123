@@ -1,10 +1,14 @@
-[gd_scene load_steps=10 format=3 uid="uid://b0maze0view3d"]
+[gd_scene load_steps=13 format=3 uid="uid://b0maze0view3d"]
 
 [ext_resource type="Script" path="res://scripts/Views/MazeView3D.cs" id="1_view3d"]
 [ext_resource type="Script" path="res://scripts/Views/CameraController3D.cs" id="2_camctl"]
 [ext_resource type="Script" path="res://scripts/Views/PlayerCharacter3D.cs" id="3_player"]
 [ext_resource type="Script" path="res://scripts/Views/LegoFigure.cs" id="4_lego"]
 [ext_resource type="Texture2D" path="res://assets/devedse.png" id="5_atlas"]
+[ext_resource type="PackedScene" path="res://scenes/MonsterProximityOverlay.tscn" id="6_overlay"]
+[ext_resource type="Script" path="res://scripts/Gameplay/Monster/MonsterManager.cs" id="7_monstermanager"]
+[ext_resource type="Script" path="res://scripts/Gameplay/Traps/TrapManager.cs" id="8_trapmanager"]
+[ext_resource type="Script" path="res://scripts/Audio/HorrorAudioController.cs" id="9_audio"]
 
 [sub_resource type="BoxMesh" id="BoxMesh_horizontal"]
 size = Vector3(1, 1.4, 0.1)
@@ -19,6 +23,9 @@ mesh = SubResource("BoxMesh_horizontal")
 [sub_resource type="MultiMesh" id="MultiMesh_vertical"]
 transform_format = 1
 mesh = SubResource("BoxMesh_vertical")
+
+[sub_resource type="MultiMesh" id="MultiMesh_floor_details"]
+transform_format = 1
 
 [sub_resource type="Environment" id="Environment_explore"]
 background_mode = 1
@@ -40,7 +47,7 @@ current = true
 fov = 60.0
 script = ExtResource("2_camctl")
 
-[node name="Player" type="Node3D" parent="."]
+[node name="Player" type="CharacterBody3D" parent="."]
 visible = false
 script = ExtResource("3_player")
 
@@ -63,7 +70,21 @@ shadow_enabled = true
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Environment_explore")
 
+[node name="MonsterProximityOverlay" parent="." instance=ExtResource("6_overlay")]
+
+[node name="MonsterManager" type="Node3D" parent="."]
+script = ExtResource("7_monstermanager")
+
+[node name="TrapManager" type="Node3D" parent="."]
+script = ExtResource("8_trapmanager")
+
+[node name="HorrorAudioController" type="Node" parent="."]
+script = ExtResource("9_audio")
+
 [node name="Floor" type="MeshInstance3D" parent="."]
+
+[node name="FloorDetails" type="MultiMeshInstance3D" parent="."]
+multimesh = SubResource("MultiMesh_floor_details")
 
 [node name="WallContainer" type="Node3D" parent="."]
 
