@@ -10,6 +10,7 @@ using Maze.Gameplay.Monster;
 using Maze.Game.Settings;
 using Maze.Generators;
 using Maze.Model;
+using Maze.Network;
 using Maze.Save;
 using Maze.Solvers;
 using Maze.UI;
@@ -31,6 +32,8 @@ public partial class Main : Node
     private const int MinimumTrapGoalDistance = 2;
     private const int PreferredTrapOpenNeighborCount = 3;
     private const int TrapSeedSalt = unchecked((int)0x5F3759DF);
+    private const double ClientSnapshotIntervalSeconds = 0.05d;
+    private const double HostSnapshotIntervalSeconds = 0.1d;
 
     private MainMenu _mainMenu = null!;
     private PauseMenu _pauseMenu = null!;
@@ -47,6 +50,7 @@ public partial class Main : Node
     private DayNightController _dayNightController = null!;
     private MonsterManager _monsterManager = null!;
     private TrapManager _trapManager = null!;
+    private MultiplayerSession _multiplayerSession = null!;
     private SaveGameService _saveGameService = null!;
     private global::Maze.Model.Maze? _currentMaze;
     private global::Maze.Model.Maze? _lastMazeBuiltFor3D;
@@ -75,6 +79,7 @@ public partial class Main : Node
 
     private Random _random = new();
     private readonly PerformanceTracker _tracker = new();
+    private readonly Dictionary<long, PlayerIdentity> _playerIdentities = new();
     private MazeGameConfig? _currentGameConfig;
     private readonly GameSessionState _sessionState = new();
     private GameFlowState _flowState = GameFlowState.Boot;
@@ -86,7 +91,13 @@ public partial class Main : Node
     private bool _isManualMode;
     private bool _isMapOverlayVisible;
     private double _manualStartTimeSeconds;
+    private double _clientSnapshotAccumulator;
+    private double _hostSnapshotAccumulator;
     private string _pendingSaveDisplayName = string.Empty;
+    private readonly HashSet<Vector2I> _knownActiveTrapCells = new();
+    private readonly Dictionary<long, PlayerRuntimeState> _authoritativeRemotePlayerOverrides = new();
+
+    private long LocalSessionPlayerId => _sessionState.EffectiveLocalPlayerId;
 
     public override void _Ready()
     {
@@ -106,11 +117,24 @@ public partial class Main : Node
         _monsterManager = GetNode<MonsterManager>("MazeView3D/MonsterManager");
         _trapManager = GetNode<TrapManager>("MazeView3D/TrapManager");
         _saveGameService = new SaveGameService();
+        _multiplayerSession = new MultiplayerSession();
+        AddChild(_multiplayerSession);
 
         _mainMenu.StartNewMazeRequested += OnStartNewMazeRequested;
         _mainMenu.LoadMazeRequested += OnLoadMazeRequested;
         _mainMenu.DeleteMazeRequested += OnDeleteMazeRequested;
+        _mainMenu.HostSessionRequested += OnHostSessionRequested;
+        _mainMenu.JoinSessionRequested += OnJoinSessionRequested;
+        _mainMenu.LeaveSessionRequested += OnLeaveSessionRequested;
         _mainMenu.SetGeneratorOptions(BuildGeneratorMenuItems());
+        _multiplayerSession.StateChanged += OnMultiplayerSessionStateChanged;
+        _multiplayerSession.PeerJoined += OnMultiplayerPeerJoined;
+        _multiplayerSession.PeerLeft += OnMultiplayerPeerLeft;
+        _multiplayerSession.SessionStartReceived += OnSessionStartReceived;
+        _multiplayerSession.SessionStartAcknowledged += OnSessionStartAcknowledged;
+        _multiplayerSession.ClientPlayerSnapshotReceived += OnClientPlayerSnapshotReceived;
+        _multiplayerSession.PlayerSnapshotBatchReceived += OnPlayerSnapshotBatchReceived;
+        _multiplayerSession.WorldSnapshotReceived += OnWorldSnapshotReceived;
         _pauseMenu.VisualSettingsChanged += OnVisualSettingsChanged;
         _pauseMenu.AudioSettingsChanged += OnAudioSettingsChanged;
         _pauseMenu.ReturnToMainMenuRequested += OnReturnToMainMenuRequested;
@@ -137,11 +161,11 @@ public partial class Main : Node
         _hud.FirstPersonToggle += OnFirstPersonToggled;
         _hud.ExploreModeToggle += OnExploreModeToggled;
         _hud.UnboundedModeChanged += OnUnboundedModeChanged;
-        _player.GoalReached += OnBotGoalReached;
+        _player.AssignPeerId(LocalSessionPlayerId);
+        _player.GoalReached += OnPlayerGoalReached;
         _player.CellVisited += OnPlayerCellVisited;
         _player.StaminaChanged += OnPlayerStaminaChanged;
         _audioController.BindPlayer(_player);
-        _monsterManager.SetPlayerWalkSpeed(_player.ManualMoveSpeed);
 
         _runner.GenerationStepProduced += OnGenerationStepProduced;
         _runner.GenerationFinished += OnGenerationFinished;
@@ -150,6 +174,13 @@ public partial class Main : Node
         ApplySimulationSpeed(DefaultStepsPerSecond);
         ApplyVisualSettings(_sessionState.VisualSettings);
         ApplyAudioSettings(_sessionState.AudioSettings);
+        SyncMultiplayerSessionState();
+        _mainMenu.SetSessionState(
+            _sessionState.SessionRole,
+            _sessionState.ConnectionStatus,
+            _sessionState.ConnectionMessage,
+            _sessionState.ConnectedPeerIds,
+            _sessionState.LocalPeerId);
         _view2D.SetCameraEnabled(_view2D.Visible);
         _mapOverlay.Visible = false;
         TransitionToState(GameFlowState.MainMenu);
@@ -164,11 +195,12 @@ public partial class Main : Node
             return;
         }
 
-        _monsterManager.UpdatePlayerWorldPosition(_player.Visible ? _player.GlobalPosition : null);
+        SyncMonsterPlayerTargets();
 
         SyncDayNightState();
         SyncTrapState();
         UpdateMonsterStunCollision();
+        UpdatePlayerReplication(delta);
     }
 
     public override void _PhysicsProcess(double delta)
@@ -201,30 +233,86 @@ public partial class Main : Node
         }
     }
 
-    public override void _ExitTree() => GD.Print("[Main] _ExitTree.");
-
-    private void OnMonsterPlayerSpotted(MonsterController monster)
+    public override void _ExitTree()
     {
-        _audioController.PlayMonsterScreech();
+        if (_multiplayerSession is not null)
+        {
+            _multiplayerSession.StateChanged -= OnMultiplayerSessionStateChanged;
+            _multiplayerSession.PeerJoined -= OnMultiplayerPeerJoined;
+            _multiplayerSession.PeerLeft -= OnMultiplayerPeerLeft;
+            _multiplayerSession.SessionStartReceived -= OnSessionStartReceived;
+            _multiplayerSession.SessionStartAcknowledged -= OnSessionStartAcknowledged;
+            _multiplayerSession.ClientPlayerSnapshotReceived -= OnClientPlayerSnapshotReceived;
+            _multiplayerSession.PlayerSnapshotBatchReceived -= OnPlayerSnapshotBatchReceived;
+            _multiplayerSession.WorldSnapshotReceived -= OnWorldSnapshotReceived;
+            _multiplayerSession.StopSession("Anwendung beendet.");
+        }
+
+        GD.Print("[Main] _ExitTree.");
     }
 
-    private void OnMonsterPlayerCaught(MonsterController monster)
+    private void OnMonsterPlayerSpotted(MonsterController monster, long peerId)
     {
-        if (!_isManualMode || _currentMaze is null || !_player.Visible)
+        if (peerId == LocalSessionPlayerId)
+        {
+            _audioController.NotifyLocalPlayerSpotted();
+        }
+    }
+
+    private void OnMonsterPlayerCaught(MonsterController monster, long peerId)
+    {
+        if (!IsAuthoritativeWorldHost() || _currentMaze is null)
         {
             return;
         }
 
         Cell startCell = ResolveStartCell(_currentMaze);
-        _audioController.PlayMonsterBite();
-        _player.ResetManualPosition(startCell);
-        _view3D.ClearProximityEffects();
-        _sessionState.GoalReached = false;
-        _monsterManager.UpdatePlayerWorldPosition(_player.GlobalPosition);
+        Cell playerSpawnCell = ResolveSpawnCellForPeer(peerId, startCell);
+
+        if (peerId == LocalSessionPlayerId && _isManualMode && _player.Visible)
+        {
+            _audioController.NotifyLocalPlayerCaught();
+            _hud.SetLocalStatus("Monsterkontakt - zurueck zum Spawn.");
+            _player.ResetManualPosition(playerSpawnCell);
+            _sessionState.GoalReached = false;
+            ApplyLocalPerceptionState(new Vector2I(playerSpawnCell.X, playerSpawnCell.Y), updateVisitedMap: false);
+        }
+
+        UpdatePlayerRuntimeState(peerId, state =>
+        {
+            state.CurrentCell = new MazePointSaveData(playerSpawnCell.X, playerSpawnCell.Y);
+            state.SetWorldPosition(global::Maze.MazeWorldGrid.CellToWorldCenter(new Vector2I(playerSpawnCell.X, playerSpawnCell.Y), _view3D.CellSize));
+            state.RotationY = peerId == LocalSessionPlayerId ? _player.GlobalRotation.Y : 0f;
+            state.IsMoving = false;
+            state.IsSprinting = false;
+            state.GoalReached = false;
+            state.IsAlive = true;
+        });
+
+        if (peerId != LocalSessionPlayerId && _sessionState.TryGetPlayerState(peerId, out PlayerRuntimeState authoritativeRemoteState))
+        {
+            _authoritativeRemotePlayerOverrides[peerId] = ClonePlayerRuntimeState(authoritativeRemoteState);
+        }
+
+        if (peerId != LocalSessionPlayerId
+            && _playerIdentities.TryGetValue(peerId, out PlayerIdentity? playerIdentity)
+            && _sessionState.TryGetPlayerState(peerId, out PlayerRuntimeState remoteState))
+        {
+            ApplyRemotePlayerSnapshot(new PlayerSnapshot
+            {
+                Identity = ClonePlayerIdentity(playerIdentity),
+                RuntimeState = ClonePlayerRuntimeState(remoteState)
+            });
+        }
     }
 
     private void OnGenerateRequested(int width, int height, string generatorId)
     {
+        if (!CanRunWorldStartAction("Neues Labyrinth"))
+        {
+            return;
+        }
+
         _pendingSaveDisplayName = string.Empty;
 
         if (StartNewGame(MazeGameConfig.CreateDefault(width, height, generatorId)))
@@ -253,9 +341,10 @@ public partial class Main : Node
         _runner.StopAll();
         _solverPath.Clear();
         _player.Hide();
+        _view3D.ClearRemotePlayerAvatars();
         _view3D.ClearTrail();
         _view3D.ClearProximityEffects();
-        _monsterManager.UpdatePlayerCell(null);
+        SyncMonsterPlayerTargets();
         ResetExploreMode();
         ClearPlayerCameraModes();
         _currentMaze = new global::Maze.Model.Maze(sanitizedConfig.Width, sanitizedConfig.Height);
@@ -276,6 +365,11 @@ public partial class Main : Node
 
     private void OnStartNewMazeRequested(string saveName, MazeGameConfig config)
     {
+        if (!CanRunWorldStartAction("Neues Labyrinth"))
+        {
+            return;
+        }
+
         _pendingSaveDisplayName = saveName;
 
         if (!StartNewGame(config))
@@ -289,12 +383,31 @@ public partial class Main : Node
 
     private void OnLoadMazeRequested(string saveId)
     {
+        if (!CanRunWorldStartAction("Spielstand laden"))
+        {
+            return;
+        }
+
         TransitionToState(GameFlowState.Loading);
 
         MazeSaveData? saveData = _saveGameService.LoadMaze(saveId);
         if (saveData is null)
         {
             GD.PrintErr($"[Main] Save konnte nicht geladen werden: {saveId}");
+            TransitionToState(GameFlowState.MainMenu);
+            RefreshSaveSlots();
+            return;
+        }
+
+        if (saveData.SaveKind != MazeSaveKind.OfflineSave)
+        {
+            GD.PrintErr($"[Main] Save {saveId} ist kein lokaler Offline-Spielstand und kann nicht direkt geladen werden.");
+            _mainMenu.SetSessionState(
+                _sessionState.SessionRole,
+                _sessionState.ConnectionStatus,
+                "Nur lokale Offline-Saves duerfen direkt geladen werden.",
+                _sessionState.ConnectedPeerIds,
+                _sessionState.LocalPeerId);
             TransitionToState(GameFlowState.MainMenu);
             RefreshSaveSlots();
             return;
@@ -307,10 +420,16 @@ public partial class Main : Node
         }
 
         TransitionToState(GameFlowState.Playing);
+        BroadcastSessionStartIfHosting("Host hat einen Spielstand fuer die Lobby geladen.");
     }
 
     private void OnDeleteMazeRequested(string saveId)
     {
+        if (!CanManageLocalSaveLibrary("Spielstand loeschen"))
+        {
+            return;
+        }
+
         if (!_saveGameService.DeleteMaze(saveId))
         {
             GD.PrintErr($"[Main] Save konnte nicht geloescht werden: {saveId}");
@@ -362,6 +481,7 @@ public partial class Main : Node
         _sessionState.GoalReached = false;
         _sessionState.StartCell = _currentMaze.GetCell(0, 0);
         _sessionState.GoalCell = _currentMaze.GetCell(_currentMaze.Width - 1, _currentMaze.Height - 1);
+        ResetLocalPlayerRuntimeState(_sessionState.StartCell);
         EnsureMonsterSpawnCells();
         EnsureTrapDefinitions();
         ConfigureTrapSystem();
@@ -377,11 +497,14 @@ public partial class Main : Node
             OnPlayManualRequested();
         }
 
+        BroadcastSessionStartIfHosting("Neues Labyrinth vom Host gestartet.");
+
         GD.Print("[Main] Generator fertig.");
     }
 
     private void OnSolveRequested(string solverId)
     {
+        BroadcastSessionStartIfHosting("Host hat einen Spielstand fuer die Lobby geladen.");
         if (!IsSandboxMode())
         {
             GD.Print("[Main] Solver im normalen Modus deaktiviert.");
@@ -407,7 +530,7 @@ public partial class Main : Node
         _solverPath.Clear();
         _player.Hide();
         _view3D.ClearTrail();
-        _monsterManager.UpdatePlayerCell(null);
+        SyncMonsterPlayerTargets();
         SetMapOverlayVisible(false);
         ResetExploreMode();
         ClearPlayerCameraModes();
@@ -416,6 +539,7 @@ public partial class Main : Node
         _sessionState.StartCell = _solverStart;
         _sessionState.GoalCell = _solverGoal;
         _sessionState.GoalReached = false;
+        ResetLocalPlayerRuntimeState(_solverStart);
         _solverStart.State = CellState.Start;
         _solverGoal.State = CellState.Goal;
         _view2D.Refresh();
@@ -507,6 +631,12 @@ public partial class Main : Node
             return;
         }
 
+        if (!CanChangePauseStateLocally())
+        {
+            _hud.SetPauseActive(_flowState == GameFlowState.Paused);
+            return;
+        }
+
         TransitionToState(paused ? GameFlowState.Paused : GameFlowState.Playing);
     }
 
@@ -541,18 +671,179 @@ public partial class Main : Node
 
     private void OnReturnToMainMenuRequested()
     {
-        StopManualMode(force: true);
-        _runner.StopAll();
-        _player.Hide();
-        _view3D.ClearTrail();
-        _view3D.ClearProximityEffects();
-        ClearTrapRuntimeState(clearDefinitions: true);
-        _monsterManager.UpdatePlayerCell(null);
-        SetMapOverlayVisible(false);
-        ResetExploreMode();
-        ClearPlayerCameraModes();
-        RefreshSaveSlots();
-        TransitionToState(GameFlowState.MainMenu);
+        ReturnToMainMenuFromSessionEnd("Sitzung beendet. Zurueck im Hauptmenue.", stopSession: true);
+    }
+
+    private void OnHostSessionRequested(string playerName, int port)
+    {
+        Error result = _multiplayerSession.StartHost(playerName, port);
+        if (result == Error.Ok)
+        {
+            GD.Print($"[Main] Host-Session gestartet auf Port {port}.");
+        }
+    }
+
+    private void OnJoinSessionRequested(string playerName, string address, int port)
+    {
+        Error result = _multiplayerSession.JoinSession(playerName, address, port);
+        if (result == Error.Ok)
+        {
+            GD.Print($"[Main] Client-Verbindung gestartet zu {address}:{port}.");
+        }
+    }
+
+    private void OnLeaveSessionRequested()
+    {
+        ReturnToMainMenuFromSessionEnd("Sitzung beendet.", stopSession: true);
+    }
+
+    private void OnMultiplayerSessionStateChanged(SessionRole role, ConnectionStatus status, string message)
+    {
+        SessionRole previousRole = _sessionState.SessionRole;
+        ConnectionStatus previousStatus = _sessionState.ConnectionStatus;
+        SyncMultiplayerSessionState();
+        _mainMenu.SetSessionState(role, status, message, _sessionState.ConnectedPeerIds, _sessionState.LocalPeerId);
+
+        if (ShouldReturnToMainMenuAfterSessionTransition(previousRole, previousStatus, role, status))
+        {
+            ReturnToMainMenuFromSessionEnd(message, stopSession: false);
+            _mainMenu.SetSessionState(
+                _sessionState.SessionRole,
+                _sessionState.ConnectionStatus,
+                _sessionState.ConnectionMessage,
+                _sessionState.ConnectedPeerIds,
+                _sessionState.LocalPeerId);
+        }
+
+        GD.Print($"[Main] Session-Status: Rolle={role}, Status={status}, Nachricht='{message}'");
+    }
+
+    private void OnMultiplayerPeerJoined(long peerId)
+    {
+        SyncMultiplayerSessionState();
+        _mainMenu.SetSessionState(
+            _sessionState.SessionRole,
+            _sessionState.ConnectionStatus,
+            _sessionState.ConnectionMessage,
+            _sessionState.ConnectedPeerIds,
+            _sessionState.LocalPeerId);
+
+        if (_multiplayerSession.Role == SessionRole.Host
+            && _currentMaze is not null
+            && _flowState is GameFlowState.Playing or GameFlowState.Paused)
+        {
+            CallDeferred(nameof(SynchronizeLateJoinClient));
+        }
+
+        GD.Print($"[Main] Peer verbunden: {peerId}");
+    }
+
+    private void OnMultiplayerPeerLeft(long peerId)
+    {
+        _authoritativeRemotePlayerOverrides.Remove(peerId);
+        _sessionState.RemovePlayerState(peerId);
+        _playerIdentities.Remove(peerId);
+        _view3D.RemoveRemotePlayerAvatar(peerId);
+        SyncMultiplayerSessionState();
+        SyncMonsterPlayerTargets();
+        _mainMenu.SetSessionState(
+            _sessionState.SessionRole,
+            _sessionState.ConnectionStatus,
+            _sessionState.ConnectionMessage,
+            _sessionState.ConnectedPeerIds,
+            _sessionState.LocalPeerId);
+        GD.Print($"[Main] Peer getrennt: {peerId}");
+    }
+
+    private void OnSessionStartReceived(SessionStartPayload payload)
+    {
+        if (_multiplayerSession.Role != SessionRole.Client)
+        {
+            return;
+        }
+
+        TransitionToState(GameFlowState.Loading);
+
+        if (!TryApplySessionStartPayload(payload))
+        {
+            ReturnToMainMenuFromSessionEnd("Startvertrag konnte nicht angewendet werden. Sitzung wurde beendet.", stopSession: true);
+            return;
+        }
+
+        GameFlowState targetState = payload.World.FlowState is GameFlowState.Loading or GameFlowState.Playing or GameFlowState.Paused
+            ? payload.World.FlowState
+            : GameFlowState.Playing;
+        TransitionToState(targetState);
+        _multiplayerSession.ConfirmSessionStartApplied(payload.SessionId);
+        GD.Print($"[Main] Startvertrag empfangen und angewendet: {payload.SessionId}");
+    }
+
+    private void OnSessionStartAcknowledged(long peerId, string sessionId)
+    {
+        GD.Print($"[Main] Client {peerId} hat Startvertrag {sessionId} bestaetigt.");
+    }
+
+    private void OnClientPlayerSnapshotReceived(long peerId, PlayerSnapshot playerSnapshot)
+    {
+        if (_currentMaze is null || peerId == LocalSessionPlayerId)
+        {
+            return;
+        }
+
+        bool hadPreviousState = _sessionState.TryGetPlayerState(peerId, out PlayerRuntimeState previousState);
+        PlayerRuntimeState authoritativeState = BuildAuthoritativeRemotePlayerState(peerId, playerSnapshot.RuntimeState);
+
+        CachePlayerIdentity(playerSnapshot.Identity);
+        _sessionState.SetPlayerState(peerId, authoritativeState);
+        ApplyRemotePlayerSnapshot(new PlayerSnapshot
+        {
+            Identity = ClonePlayerIdentity(playerSnapshot.Identity),
+            RuntimeState = ClonePlayerRuntimeState(authoritativeState)
+        });
+
+        if ((!hadPreviousState || !previousState.GoalReached) && authoritativeState.GoalReached)
+        {
+            GD.Print($"[Main] Host bestaetigt Ziel fuer Peer {peerId}.");
+        }
+
+        SyncMonsterPlayerTargets();
+    }
+
+    private void OnPlayerSnapshotBatchReceived(PlayerSnapshotBatch snapshotBatch)
+    {
+        if (_currentMaze is null)
+        {
+            return;
+        }
+
+        ApplySessionPlayerSnapshots(snapshotBatch.Players);
+    }
+
+    private void OnWorldSnapshotReceived(WorldRuntimeSnapshot worldSnapshot)
+    {
+        if (_multiplayerSession.Role != SessionRole.Client || _currentMaze is null)
+        {
+            return;
+        }
+
+        _sessionState.DayNightProgress = worldSnapshot.DayNightProgress;
+        ApplyMonsterCellsToSessionState(ConvertMazePoints(worldSnapshot.ActiveMonsterCells));
+        ApplyTrapCellsToSessionState(ConvertTrapCells(worldSnapshot.ActiveTrapCells));
+
+        if (_flowState is GameFlowState.Loading or GameFlowState.Playing or GameFlowState.Paused
+            && worldSnapshot.FlowState is GameFlowState.Loading or GameFlowState.Playing or GameFlowState.Paused
+            && _flowState != worldSnapshot.FlowState)
+        {
+            TransitionToState(worldSnapshot.FlowState);
+        }
+        else
+        {
+            _sessionState.FlowState = worldSnapshot.FlowState;
+            SyncDayNightState();
+        }
+
+        SyncTrapState();
+        SyncMonsterVisualState();
     }
 
     private void OnStepRequested() =>
@@ -572,7 +863,7 @@ public partial class Main : Node
         _player.Hide();
         _view3D.ClearTrail();
         _view3D.ClearProximityEffects();
-        _monsterManager.UpdatePlayerCell(null);
+        SyncMonsterPlayerTargets();
         SetMapOverlayVisible(false);
         ResetExploreMode();
         ClearPlayerCameraModes();
@@ -585,6 +876,10 @@ public partial class Main : Node
 
         _currentMaze.ResetSolverState();
         _sessionState.GoalReached = false;
+        if (_sessionState.StartCell is not null)
+        {
+            ResetLocalPlayerRuntimeState(_sessionState.StartCell);
+        }
         RebuildTrapRuntimeState();
         TransitionToState(GameFlowState.Playing);
         _view2D.ForceRefresh();
@@ -700,9 +995,16 @@ public partial class Main : Node
         ApplyEffectiveRunnerMode();
     }
 
-    private void OnBotGoalReached()
+    private void OnPlayerGoalReached(long peerId)
     {
+        if (peerId != LocalSessionPlayerId)
+        {
+            return;
+        }
+
         _sessionState.GoalReached = true;
+        UpdatePlayerRuntimeState(LocalSessionPlayerId, state => state.GoalReached = true);
+        _hud.SetLocalStatus("Ziel erreicht.");
 
         if (_isManualMode)
         {
@@ -724,16 +1026,25 @@ public partial class Main : Node
         GD.Print("[Main] Bot ist am Ziel angekommen.");
     }
 
-    private void OnPlayerCellVisited(int x, int y)
+    private void OnPlayerCellVisited(long peerId, int x, int y)
     {
+        if (peerId != LocalSessionPlayerId)
+        {
+            return;
+        }
+
         Vector2I playerCell = new(x, y);
-        _audioController.UpdatePlayerCell(playerCell);
+        UpdatePlayerRuntimeState(LocalSessionPlayerId, state =>
+        {
+            state.CurrentCell = MazePointSaveData.FromVector2I(playerCell);
+            state.SetWorldPosition(_player.GlobalPosition);
+            state.RotationY = _player.GlobalRotation.Y;
+            state.IsMoving = _player.IsMoving;
+            state.IsSprinting = _player.IsSprinting;
+        });
+        _hud.SetLocalStatus(string.Empty);
         _trapManager.NotifyPlayerEnteredCell(playerCell);
-        _monsterManager.UpdatePlayerCell(playerCell);
-        _view3D.MarkTrailCell(x, y);
-        _view3D.UpdateMonsterProximity(playerCell);
-        _mapOverlay.MarkVisited(playerCell);
-        _mapOverlay.SetPlayerCell(playerCell);
+        ApplyLocalPerceptionState(playerCell);
     }
 
     private void OnPlayManualToggle(bool active)
@@ -772,9 +1083,11 @@ public partial class Main : Node
         _view3D.ClearTrail();
         _solverStart = ResolveStartCell(_currentMaze);
         _solverGoal = ResolveGoalCell(_currentMaze);
+        Cell localSpawnCell = ResolveLocalSpawnCell(_solverStart);
         _sessionState.StartCell = _solverStart;
         _sessionState.GoalCell = _solverGoal;
         _sessionState.GoalReached = false;
+        ResetLocalPlayerRuntimeState(_solverStart);
         _solverStart.State = CellState.Start;
         _solverGoal.State = CellState.Goal;
         _view2D.ForceRefresh();
@@ -785,9 +1098,22 @@ public partial class Main : Node
         _hud.SetUse3DActive(true);
         OnViewToggled(true);
 
-        _player.EnableManualMode(_currentMaze, _solverStart, _solverGoal, _view3D.CellSize, _camera3D);
+        _player.EnableManualMode(_currentMaze, localSpawnCell, _solverGoal, _view3D.CellSize, _camera3D, PlayerCharacter3D.ControlAuthority.LocalInput);
         _isManualMode = true;
         _sessionState.IsManualMode = true;
+        UpdatePlayerRuntimeState(LocalSessionPlayerId, state =>
+        {
+            state.IsManualMode = true;
+            state.IsAlive = true;
+            state.GoalReached = false;
+            state.CurrentCell = new MazePointSaveData(localSpawnCell.X, localSpawnCell.Y);
+            state.SetWorldPosition(_player.GlobalPosition);
+            state.RotationY = _player.GlobalRotation.Y;
+            state.CurrentStamina = _player.CurrentStamina;
+            state.MaximumStamina = _player.MaximumStamina;
+            state.IsMoving = _player.IsMoving;
+            state.IsSprinting = _player.IsSprinting;
+        });
         _manualStartTimeSeconds = Time.GetTicksMsec() / 1000.0;
         ApplyEffectiveRunnerMode();
 
@@ -795,6 +1121,7 @@ public partial class Main : Node
         _followCamEnabled = true;
         _hud.SetFollowCamActive(true);
         _hud.SetStaminaVisible(true);
+        _hud.SetLocalStatus(string.Empty);
         ApplyPlayerCameraMode(true);
         RefreshAudioGameplayState();
 
@@ -822,10 +1149,13 @@ public partial class Main : Node
         _player.DisableManualMode();
         _isManualMode = false;
         _sessionState.IsManualMode = false;
-        _audioController.UpdatePlayerCell(null);
-        _view3D.ClearProximityEffects();
-        _monsterManager.UpdatePlayerCell(null);
-        _mapOverlay.SetPlayerCell(null);
+        UpdatePlayerRuntimeState(LocalSessionPlayerId, state =>
+        {
+            state.IsManualMode = false;
+            state.IsMoving = false;
+            state.IsSprinting = false;
+        });
+        ClearLocalPerceptionState();
         SetMapOverlayVisible(false);
 
         ClearPlayerCameraModes();
@@ -845,10 +1175,43 @@ public partial class Main : Node
         _player.PathMoveSpeed = Mathf.Clamp(stepsPerSecond, 0.5f, MaxSimulationSpeed);
     }
 
-    private void OnPlayerStaminaChanged(float current, float maximum, bool sprinting)
+    private void OnPlayerStaminaChanged(long peerId, float current, float maximum, bool sprinting)
     {
+        if (peerId != LocalSessionPlayerId)
+        {
+            return;
+        }
+
+        UpdatePlayerRuntimeState(LocalSessionPlayerId, state =>
+        {
+            state.CurrentStamina = current;
+            state.MaximumStamina = maximum;
+            state.IsMoving = _player.IsMoving;
+            state.IsSprinting = sprinting;
+        });
         _hud.SetStamina(current, maximum, sprinting);
         _audioController.SetPlayerStamina(current, maximum, sprinting);
+    }
+
+    private void ApplyLocalPerceptionState(Vector2I playerCell, bool updateVisitedMap = true)
+    {
+        _audioController.UpdatePlayerCell(playerCell);
+        _view3D.MarkTrailCell(playerCell.X, playerCell.Y);
+        _view3D.UpdateMonsterProximity(playerCell);
+
+        if (updateVisitedMap)
+        {
+            _mapOverlay.MarkVisited(playerCell);
+        }
+
+        _mapOverlay.SetPlayerCell(playerCell);
+    }
+
+    private void ClearLocalPerceptionState()
+    {
+        _audioController.UpdatePlayerCell(null);
+        _view3D.ClearProximityEffects();
+        _mapOverlay.SetPlayerCell(null);
     }
 
     private void ApplyVisualSettings(VisualSettings settings)
@@ -962,6 +1325,11 @@ public partial class Main : Node
 
     private void TogglePauseMenu()
     {
+        if (!CanChangePauseStateLocally())
+        {
+            return;
+        }
+
         if (_flowState == GameFlowState.Playing)
         {
             TransitionToState(GameFlowState.Paused);
@@ -984,6 +1352,13 @@ public partial class Main : Node
             return;
         }
 
+        if (!CanPersistOfflineSave())
+        {
+            GD.Print("[Main] Lauf nicht lokal gespeichert, weil die aktuelle Welt als Host-Session gestartet wurde.");
+            _pendingSaveDisplayName = string.Empty;
+            return;
+        }
+
         try
         {
             MazeSaveData saveData = _mazeSerializer.CreateSaveData(
@@ -993,7 +1368,8 @@ public partial class Main : Node
                 ResolveStartCell(_currentMaze),
                 ResolveGoalCell(_currentMaze),
                 GetTrapDefinitionsForSave(),
-                _sessionState.MonsterSpawnCells);
+                _sessionState.MonsterSpawnCells,
+                MazeSaveKind.OfflineSave);
 
             _saveGameService.SaveMaze(saveData);
             RefreshSaveSlots();
@@ -1009,7 +1385,7 @@ public partial class Main : Node
         }
     }
 
-    private bool TryLoadMaze(MazeSaveData saveData)
+    private bool TryLoadMaze(MazeSaveData saveData, bool allowAutoManualStart = true)
     {
         try
         {
@@ -1017,6 +1393,7 @@ public partial class Main : Node
             _runner.StopAll();
             _solverPath.Clear();
             _player.Hide();
+            _view3D.ClearRemotePlayerAvatars();
             _view3D.ClearTrail();
             ResetExploreMode();
             ClearPlayerCameraModes();
@@ -1034,6 +1411,7 @@ public partial class Main : Node
             _sessionState.StartCell = ResolveSavePoint(_currentMaze, saveData.StartCell, 0, 0);
             _sessionState.GoalCell = ResolveSavePoint(_currentMaze, saveData.GoalCell, _currentMaze.Width - 1, _currentMaze.Height - 1);
             _sessionState.IsRunning = true;
+            ResetLocalPlayerRuntimeState(_sessionState.StartCell);
             EnsureMonsterSpawnCells();
             ConfigureDayNightCycle(_currentGameConfig);
 
@@ -1047,7 +1425,7 @@ public partial class Main : Node
             ConfigureMonsterSystem();
             SyncDayNightState();
 
-            if (!IsSandboxMode())
+            if (allowAutoManualStart && !IsSandboxMode())
             {
                 OnPlayManualRequested();
             }
@@ -1062,14 +1440,788 @@ public partial class Main : Node
         }
     }
 
+    private bool TryApplySessionStartPayload(SessionStartPayload payload)
+    {
+        if (payload.ContractVersion != SessionStartPayload.CurrentContractVersion)
+        {
+            GD.PrintErr($"[Main] Unbekannte Startvertrags-Version: {payload.ContractVersion}");
+            return false;
+        }
+
+        MazeSaveData saveData = payload.World.SaveData;
+        saveData.Config = payload.GameConfig.Clone().Sanitize();
+
+        if (!TryLoadMaze(saveData, allowAutoManualStart: false))
+        {
+            return false;
+        }
+
+        _view3D.ClearRemotePlayerAvatars();
+        PlayerSnapshot? localPlayerSnapshot = null;
+
+        foreach (PlayerSnapshot playerSnapshot in payload.Players)
+        {
+            if (playerSnapshot.Identity.PeerId == LocalSessionPlayerId)
+            {
+                localPlayerSnapshot = playerSnapshot;
+                break;
+            }
+        }
+
+        ApplySessionPlayerSnapshots(payload.Players);
+
+        if (localPlayerSnapshot is not null)
+        {
+            ApplyLocalSessionStartSnapshot(localPlayerSnapshot);
+        }
+
+        _sessionState.DayNightProgress = payload.World.DayNightProgress;
+        UpdatePlayerRuntimeState(LocalSessionPlayerId, state =>
+        {
+            state.GoalReached = payload.World.GoalReached || state.GoalReached;
+            state.IsManualMode = localPlayerSnapshot?.RuntimeState.IsManualMode ?? state.IsManualMode;
+        });
+        _isManualMode = _sessionState.IsManualMode;
+
+        if (_currentGameConfig is not null)
+        {
+            ConfigureDayNightCycle(_currentGameConfig);
+            SyncDayNightState();
+        }
+
+        return true;
+    }
+
+    private void BroadcastSessionStartIfHosting(string reason)
+    {
+        if (_multiplayerSession.Role != SessionRole.Host || _currentMaze is null || _currentGameConfig is null)
+        {
+            return;
+        }
+
+        Cell startCell = ResolveStartCell(_currentMaze);
+        Cell goalCell = ResolveGoalCell(_currentMaze);
+        MazeSaveData sessionSaveData = _mazeSerializer.CreateSaveData(
+            _pendingSaveDisplayName,
+            _currentGameConfig,
+            _currentMaze,
+            startCell,
+            goalCell,
+            GetTrapDefinitionsForSave(),
+            _sessionState.MonsterSpawnCells,
+            MazeSaveKind.HostSessionSnapshot);
+
+        IReadOnlyList<PlayerIdentity> playerIdentities = BuildSessionPlayerIdentities(_currentMaze);
+        CachePlayerIdentities(playerIdentities, clearMissing: true);
+        List<PlayerSnapshot> players = new(playerIdentities.Count);
+
+        foreach (PlayerIdentity playerIdentity in playerIdentities)
+        {
+            PlayerRuntimeState runtimeState = CreatePlayerRuntimeState(playerIdentity, playerIdentity.AssignedSpawnCell);
+            _sessionState.SetPlayerState(playerIdentity.PeerId, runtimeState);
+            players.Add(new PlayerSnapshot
+            {
+                Identity = ClonePlayerIdentity(playerIdentity),
+                RuntimeState = runtimeState
+            });
+        }
+
+        SessionStartPayload payload = new()
+        {
+            HostPeerId = _multiplayerSession.LocalPeerId,
+            GameConfig = _currentGameConfig.Clone().Sanitize(),
+            World = new GameWorldSnapshot
+            {
+                SaveData = sessionSaveData,
+                FlowState = _flowState,
+                DayNightProgress = _sessionState.DayNightProgress,
+                IsManualMode = _sessionState.IsManualMode,
+                GoalReached = _sessionState.GoalReached
+            },
+            Players = players
+        };
+
+        Error result = _multiplayerSession.BroadcastSessionStart(payload);
+        if (result == Error.Ok)
+        {
+            GD.Print($"[Main] {reason} Startvertrag={payload.SessionId}, Spieler={players.Count}");
+        }
+    }
+
+    private IReadOnlyList<PlayerIdentity> BuildSessionPlayerIdentities(global::Maze.Model.Maze maze)
+    {
+        Cell startCell = ResolveStartCell(maze);
+        MazePointSaveData defaultSpawnCell = new(startCell.X, startCell.Y);
+        IReadOnlyList<PlayerIdentity> baseIdentities = _multiplayerSession.BuildPlayerIdentities(defaultSpawnCell);
+        List<PlayerIdentity> playerIdentities = new(baseIdentities.Count);
+
+        foreach (PlayerIdentity playerIdentity in baseIdentities)
+        {
+            playerIdentities.Add(ClonePlayerIdentity(playerIdentity));
+        }
+
+        List<MazePointSaveData> spawnCells = BuildSharedSpawnCells(maze, startCell, playerIdentities.Count);
+        for (int index = 0; index < playerIdentities.Count; index++)
+        {
+            MazePointSaveData spawnCell = spawnCells[index];
+            playerIdentities[index].AssignedSpawnCell = new MazePointSaveData(spawnCell.X, spawnCell.Y);
+        }
+
+        return playerIdentities;
+    }
+
+    private static List<MazePointSaveData> BuildSharedSpawnCells(global::Maze.Model.Maze maze, Cell startCell, int playerCount)
+    {
+        List<MazePointSaveData> spawnCells = new(Math.Max(1, playerCount));
+        Queue<Cell> frontier = new();
+        HashSet<Vector2I> visited = new()
+        {
+            new Vector2I(startCell.X, startCell.Y)
+        };
+
+        frontier.Enqueue(startCell);
+
+        while (frontier.Count > 0 && spawnCells.Count < playerCount)
+        {
+            Cell current = frontier.Dequeue();
+            spawnCells.Add(new MazePointSaveData(current.X, current.Y));
+
+            foreach (Direction direction in All)
+            {
+                if (current.HasWall(direction))
+                {
+                    continue;
+                }
+
+                Cell? neighbor = maze.GetNeighbor(current, direction);
+                if (neighbor is null)
+                {
+                    continue;
+                }
+
+                Vector2I neighborCell = new(neighbor.X, neighbor.Y);
+                if (visited.Add(neighborCell))
+                {
+                    frontier.Enqueue(neighbor);
+                }
+            }
+        }
+
+        while (spawnCells.Count < playerCount)
+        {
+            spawnCells.Add(new MazePointSaveData(startCell.X, startCell.Y));
+        }
+
+        return spawnCells;
+    }
+
+    private PlayerRuntimeState CreatePlayerRuntimeState(PlayerIdentity playerIdentity, MazePointSaveData defaultSpawnCell)
+    {
+        bool hasExistingState = _sessionState.TryGetPlayerState(playerIdentity.PeerId, out PlayerRuntimeState existingState);
+        PlayerRuntimeState state = hasExistingState
+            ? ClonePlayerRuntimeState(existingState)
+            : new PlayerRuntimeState
+            {
+                CurrentCell = new MazePointSaveData(defaultSpawnCell.X, defaultSpawnCell.Y)
+            };
+
+        if (playerIdentity.PeerId == _multiplayerSession.LocalPeerId && _player.Visible)
+        {
+            Vector2I playerCell = _player.CurrentPlayerCell ?? new Vector2I(defaultSpawnCell.X, defaultSpawnCell.Y);
+            state.CurrentCell = new MazePointSaveData(playerCell.X, playerCell.Y);
+            state.SetWorldPosition(_player.GlobalPosition);
+            state.RotationY = _player.GlobalRotation.Y;
+            state.CurrentStamina = _player.CurrentStamina;
+            state.MaximumStamina = _player.MaximumStamina;
+            state.IsMoving = _player.IsMoving;
+            state.IsSprinting = _player.IsSprinting;
+            state.IsManualMode = _player.IsManualModeActive;
+            state.GoalReached = _sessionState.GoalReached;
+            state.IsAlive = _sessionState.IsPlayerAlive;
+            return state;
+        }
+
+        if (!hasExistingState)
+        {
+            state.SetWorldPosition(global::Maze.MazeWorldGrid.CellToWorldCenter(defaultSpawnCell.ToVector2I(), _view3D.CellSize));
+        }
+
+        return state;
+    }
+
+    private void ResetLocalPlayerRuntimeState(Cell startCell)
+    {
+        Cell localSpawnCell = ResolveLocalSpawnCell(startCell);
+        UpdatePlayerRuntimeState(LocalSessionPlayerId, state =>
+        {
+            state.CurrentCell = new MazePointSaveData(localSpawnCell.X, localSpawnCell.Y);
+            state.SetWorldPosition(global::Maze.MazeWorldGrid.CellToWorldCenter(localSpawnCell, _view3D.CellSize));
+            state.RotationY = 0f;
+            state.CurrentStamina = 1f;
+            state.MaximumStamina = 1f;
+            state.IsMoving = false;
+            state.IsSprinting = false;
+            state.IsAlive = true;
+            state.GoalReached = false;
+            state.IsManualMode = false;
+        });
+    }
+
+    private void ApplySessionPlayerSnapshots(IEnumerable<PlayerSnapshot> playerSnapshots)
+    {
+        HashSet<long> activePeerIds = new();
+
+        foreach (PlayerSnapshot playerSnapshot in playerSnapshots)
+        {
+            activePeerIds.Add(playerSnapshot.Identity.PeerId);
+            CachePlayerIdentity(playerSnapshot.Identity);
+            _sessionState.SetPlayerState(playerSnapshot.Identity.PeerId, playerSnapshot.RuntimeState);
+
+            if (playerSnapshot.Identity.PeerId == LocalSessionPlayerId)
+            {
+                ApplyLocalPlayerSnapshot(playerSnapshot, updateVisitedMap: false);
+                continue;
+            }
+
+            ApplyRemotePlayerSnapshot(playerSnapshot);
+        }
+
+        PruneRemotePlayerAvatars(activePeerIds);
+        SyncMonsterPlayerTargets();
+    }
+
+    private void ApplyRemotePlayerSnapshot(PlayerSnapshot playerSnapshot)
+    {
+        if (_currentMaze is null || playerSnapshot.Identity.PeerId == LocalSessionPlayerId)
+        {
+            return;
+        }
+
+        PlayerCharacter3D remoteAvatar = _view3D.EnsureRemotePlayerAvatar(_player, playerSnapshot.Identity.PeerId);
+        remoteAvatar.AssignPeerId(playerSnapshot.Identity.PeerId);
+
+        if (!playerSnapshot.RuntimeState.IsManualMode || !playerSnapshot.RuntimeState.IsAlive)
+        {
+            remoteAvatar.Hide();
+            return;
+        }
+
+        remoteAvatar.ApplyReplicatedRuntimeState(_currentMaze, ResolveGoalCell(_currentMaze), _view3D.CellSize, playerSnapshot.RuntimeState);
+    }
+
+    private void PruneRemotePlayerAvatars(HashSet<long> activePeerIds)
+    {
+        foreach (long peerId in new List<long>(_playerIdentities.Keys))
+        {
+            if (peerId == LocalSessionPlayerId || activePeerIds.Contains(peerId))
+            {
+                continue;
+            }
+
+            _playerIdentities.Remove(peerId);
+            _view3D.RemoveRemotePlayerAvatar(peerId);
+        }
+    }
+
+    private void UpdatePlayerRuntimeState(long peerId, Action<PlayerRuntimeState> update)
+    {
+        PlayerRuntimeState state = _sessionState.GetOrCreatePlayerState(peerId);
+        update(state);
+        SyncMonsterPlayerTargets();
+    }
+
+    private static PlayerRuntimeState ClonePlayerRuntimeState(PlayerRuntimeState state)
+    {
+        return new PlayerRuntimeState
+        {
+            CurrentCell = new MazePointSaveData(state.CurrentCell.X, state.CurrentCell.Y),
+            WorldX = state.WorldX,
+            WorldY = state.WorldY,
+            WorldZ = state.WorldZ,
+            RotationY = state.RotationY,
+            CurrentStamina = state.CurrentStamina,
+            MaximumStamina = state.MaximumStamina,
+            IsMoving = state.IsMoving,
+            IsSprinting = state.IsSprinting,
+            IsAlive = state.IsAlive,
+            GoalReached = state.GoalReached,
+            IsManualMode = state.IsManualMode
+        };
+    }
+
     private void RefreshSaveSlots() =>
         _mainMenu.SetSaveSlots(_saveGameService.ListSaves());
+
+    private void SyncMultiplayerSessionState()
+    {
+        _sessionState.UpdateNetworkSession(
+            _multiplayerSession.Role,
+            _multiplayerSession.Status,
+            _multiplayerSession.StatusMessage,
+            _multiplayerSession.ConnectedPeerIds,
+            _multiplayerSession.LocalPeerId);
+        _player.AssignPeerId(LocalSessionPlayerId);
+
+        if (_multiplayerSession.Role == SessionRole.Offline)
+        {
+            _view3D.ClearRemotePlayerAvatars();
+            _playerIdentities.Clear();
+            _authoritativeRemotePlayerOverrides.Clear();
+            ResetNetworkSnapshotTimers();
+            _sessionState.RetainOnlyPlayerState(LocalSessionPlayerId);
+        }
+
+        SyncMonsterPlayerTargets();
+    }
+
+    private bool ShouldReturnToMainMenuAfterSessionTransition(
+        SessionRole previousRole,
+        ConnectionStatus previousStatus,
+        SessionRole currentRole,
+        ConnectionStatus currentStatus)
+    {
+        bool hadActiveSession = previousRole is SessionRole.Host or SessionRole.Client
+            || previousStatus is ConnectionStatus.Starting or ConnectionStatus.Hosting or ConnectionStatus.Connecting or ConnectionStatus.Connected or ConnectionStatus.Synchronized;
+        bool sessionEnded = currentRole == SessionRole.Offline
+            && currentStatus is ConnectionStatus.Offline or ConnectionStatus.Error;
+
+        if (!hadActiveSession || !sessionEnded)
+        {
+            return false;
+        }
+
+        return _flowState != GameFlowState.MainMenu
+            || _isManualMode
+            || _playerIdentities.Count > 0
+            || _view3D.Visible;
+    }
+
+    private void ReturnToMainMenuFromSessionEnd(string message, bool stopSession)
+    {
+        if (stopSession && _multiplayerSession.Role != SessionRole.Offline)
+        {
+            _multiplayerSession.StopSession(message);
+        }
+
+        StopManualMode(force: true);
+        _runner.StopAll();
+        _player.Hide();
+        _view3D.ClearRemotePlayerAvatars();
+        _playerIdentities.Clear();
+        _authoritativeRemotePlayerOverrides.Clear();
+        _view3D.ClearTrail();
+        _view3D.ClearProximityEffects();
+        _monsterManager.Configure(null, null, Array.Empty<Vector2I>(), _view3D.CellSize);
+        _monsterManager.UpdatePlayers(Array.Empty<MonsterPlayerTarget>());
+        _sessionState.ActiveMonsterCells.Clear();
+        _sessionState.MonsterSpawnCells.Clear();
+        ClearTrapRuntimeState(clearDefinitions: true);
+        _sessionState.RetainOnlyPlayerState(LocalSessionPlayerId);
+        SyncMonsterPlayerTargets();
+        ResetNetworkSnapshotTimers();
+        SetMapOverlayVisible(false);
+        ResetExploreMode();
+        ClearPlayerCameraModes();
+        RefreshSaveSlots();
+        TransitionToState(GameFlowState.MainMenu);
+
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            _mainMenu.SetSessionState(
+                _sessionState.SessionRole,
+                _sessionState.ConnectionStatus,
+                message,
+                _sessionState.ConnectedPeerIds,
+                _sessionState.LocalPeerId);
+        }
+    }
+
+    private void SyncMonsterPlayerTargets()
+    {
+        if (_currentMaze is null)
+        {
+            _monsterManager.UpdatePlayers(Array.Empty<MonsterPlayerTarget>());
+            return;
+        }
+
+        List<MonsterPlayerTarget> playerTargets = new();
+        foreach (KeyValuePair<long, PlayerRuntimeState> entry in _sessionState.EnumerateMonsterTargetStates())
+        {
+            long peerId = entry.Key;
+            PlayerRuntimeState runtimeState = entry.Value;
+            Vector3 worldPosition = runtimeState.GetWorldPosition();
+            if (peerId == LocalSessionPlayerId && _player.Visible && _player.IsManualModeActive)
+            {
+                worldPosition = _player.GlobalPosition;
+            }
+
+            playerTargets.Add(new MonsterPlayerTarget(
+                peerId,
+                runtimeState.CurrentCell.ToVector2I(),
+                worldPosition,
+                _player.ManualMoveSpeed));
+        }
+
+        _monsterManager.UpdatePlayers(playerTargets);
+    }
+
+    private void CachePlayerIdentities(IEnumerable<PlayerIdentity> playerIdentities, bool clearMissing)
+    {
+        HashSet<long> seenPeerIds = new();
+        foreach (PlayerIdentity playerIdentity in playerIdentities)
+        {
+            seenPeerIds.Add(playerIdentity.PeerId);
+            CachePlayerIdentity(playerIdentity);
+        }
+
+        if (!clearMissing)
+        {
+            return;
+        }
+
+        foreach (long peerId in new List<long>(_playerIdentities.Keys))
+        {
+            if (peerId == LocalSessionPlayerId || seenPeerIds.Contains(peerId))
+            {
+                continue;
+            }
+
+            _playerIdentities.Remove(peerId);
+            _view3D.RemoveRemotePlayerAvatar(peerId);
+        }
+    }
+
+    private void CachePlayerIdentity(PlayerIdentity playerIdentity)
+    {
+        _playerIdentities[playerIdentity.PeerId] = ClonePlayerIdentity(playerIdentity);
+    }
+
+    private static PlayerIdentity ClonePlayerIdentity(PlayerIdentity playerIdentity)
+    {
+        return new PlayerIdentity
+        {
+            PeerId = playerIdentity.PeerId,
+            PlayerName = playerIdentity.PlayerName,
+            PlayerSlot = playerIdentity.PlayerSlot,
+            IsHost = playerIdentity.IsHost,
+            AssignedSpawnCell = new MazePointSaveData(playerIdentity.AssignedSpawnCell.X, playerIdentity.AssignedSpawnCell.Y)
+        };
+    }
+
+    private void ResetNetworkSnapshotTimers()
+    {
+        _clientSnapshotAccumulator = 0d;
+        _hostSnapshotAccumulator = 0d;
+    }
+
+    private void UpdatePlayerReplication(double delta)
+    {
+        if (_currentMaze is null || !IsGameplayState())
+        {
+            ResetNetworkSnapshotTimers();
+            return;
+        }
+
+        switch (_multiplayerSession.Role)
+        {
+            case SessionRole.Client:
+                _clientSnapshotAccumulator += delta;
+                if (_clientSnapshotAccumulator < ClientSnapshotIntervalSeconds)
+                {
+                    return;
+                }
+
+                _clientSnapshotAccumulator = 0d;
+                if (TryBuildPlayerSnapshot(LocalSessionPlayerId, out PlayerSnapshot? localSnapshot))
+                {
+                    _multiplayerSession.SendLocalPlayerSnapshot(localSnapshot!);
+                }
+                break;
+
+            case SessionRole.Host:
+                _hostSnapshotAccumulator += delta;
+                if (_hostSnapshotAccumulator < HostSnapshotIntervalSeconds)
+                {
+                    return;
+                }
+
+                _hostSnapshotAccumulator = 0d;
+                PlayerSnapshotBatch snapshotBatch = BuildPlayerSnapshotBatch();
+                ApplySessionPlayerSnapshots(snapshotBatch.Players);
+                _multiplayerSession.BroadcastPlayerSnapshots(snapshotBatch);
+                _multiplayerSession.BroadcastWorldSnapshot(BuildWorldSnapshot());
+                break;
+
+            default:
+                ResetNetworkSnapshotTimers();
+                break;
+        }
+    }
+
+    private PlayerSnapshotBatch BuildPlayerSnapshotBatch()
+    {
+        PlayerSnapshotBatch snapshotBatch = new();
+
+        foreach (PlayerIdentity playerIdentity in GetOrderedPlayerIdentities())
+        {
+            if (TryBuildPlayerSnapshot(playerIdentity.PeerId, out PlayerSnapshot? snapshot))
+            {
+                snapshotBatch.Players.Add(snapshot!);
+            }
+        }
+
+        return snapshotBatch;
+    }
+
+    private WorldRuntimeSnapshot BuildWorldSnapshot()
+    {
+        WorldRuntimeSnapshot snapshot = new()
+        {
+            FlowState = _flowState,
+            DayNightProgress = _sessionState.DayNightProgress
+        };
+
+        foreach (Vector2I cell in _sessionState.ActiveMonsterCells)
+        {
+            snapshot.ActiveMonsterCells.Add(new MazePointSaveData(cell.X, cell.Y));
+        }
+
+        foreach (Vector2I cell in _sessionState.ActiveTrapCells)
+        {
+            snapshot.ActiveTrapCells.Add(new MazePointSaveData(cell.X, cell.Y));
+        }
+
+        return snapshot;
+    }
+
+    private bool TryBuildPlayerSnapshot(long peerId, out PlayerSnapshot? snapshot)
+    {
+        snapshot = null;
+        if (_currentMaze is null)
+        {
+            return false;
+        }
+
+        if (!_playerIdentities.TryGetValue(peerId, out PlayerIdentity? playerIdentity))
+        {
+            CachePlayerIdentities(BuildSessionPlayerIdentities(_currentMaze), clearMissing: false);
+            if (!_playerIdentities.TryGetValue(peerId, out playerIdentity))
+            {
+                return false;
+            }
+        }
+
+        snapshot = new PlayerSnapshot
+        {
+            Identity = ClonePlayerIdentity(playerIdentity),
+            RuntimeState = CreatePlayerRuntimeState(playerIdentity, playerIdentity.AssignedSpawnCell)
+        };
+        return true;
+    }
+
+    private PlayerRuntimeState BuildAuthoritativeRemotePlayerState(long peerId, PlayerRuntimeState clientRuntimeState)
+    {
+        PlayerRuntimeState effectiveState = ClonePlayerRuntimeState(clientRuntimeState);
+
+        if (_authoritativeRemotePlayerOverrides.TryGetValue(peerId, out PlayerRuntimeState? authoritativeOverride))
+        {
+            if (HasAcknowledgedAuthoritativeRemoteState(clientRuntimeState, authoritativeOverride))
+            {
+                _authoritativeRemotePlayerOverrides.Remove(peerId);
+            }
+            else
+            {
+                effectiveState = ClonePlayerRuntimeState(authoritativeOverride);
+            }
+        }
+
+        effectiveState.GoalReached = ShouldAcceptRemoteGoalReached(effectiveState);
+        return effectiveState;
+    }
+
+    private bool ShouldAcceptRemoteGoalReached(PlayerRuntimeState runtimeState)
+    {
+        if (!runtimeState.GoalReached || _currentMaze is null)
+        {
+            return false;
+        }
+
+        Cell goalCell = ResolveGoalCell(_currentMaze);
+        return runtimeState.CurrentCell.X == goalCell.X && runtimeState.CurrentCell.Y == goalCell.Y;
+    }
+
+    private static bool HasAcknowledgedAuthoritativeRemoteState(PlayerRuntimeState clientRuntimeState, PlayerRuntimeState authoritativeState)
+    {
+        return clientRuntimeState.CurrentCell.X == authoritativeState.CurrentCell.X
+            && clientRuntimeState.CurrentCell.Y == authoritativeState.CurrentCell.Y
+            && clientRuntimeState.IsAlive == authoritativeState.IsAlive
+            && clientRuntimeState.IsManualMode == authoritativeState.IsManualMode
+            && clientRuntimeState.GoalReached == authoritativeState.GoalReached;
+    }
+
+    private IEnumerable<PlayerIdentity> GetOrderedPlayerIdentities()
+    {
+        List<PlayerIdentity> orderedIdentities = new(_playerIdentities.Values);
+        orderedIdentities.Sort((left, right) => left.PlayerSlot != right.PlayerSlot
+            ? left.PlayerSlot.CompareTo(right.PlayerSlot)
+            : left.PeerId.CompareTo(right.PeerId));
+        return orderedIdentities;
+    }
+
+    private bool CanRunWorldStartAction(string actionName)
+    {
+        if (_sessionState.SessionRole != SessionRole.Client && _sessionState.ConnectionStatus is not ConnectionStatus.Connecting)
+        {
+            return true;
+        }
+
+        string message = _sessionState.ConnectionStatus == ConnectionStatus.Connecting
+            ? $"{actionName} ist waehrend des Verbindungsaufbaus gesperrt."
+            : $"{actionName} ist fuer Clients in Phase 1 noch nicht verfuegbar.";
+
+        GD.PrintErr($"[Main] {message}");
+        _mainMenu.SetSessionState(
+            _sessionState.SessionRole,
+            _sessionState.ConnectionStatus,
+            message,
+            _sessionState.ConnectedPeerIds,
+            _sessionState.LocalPeerId);
+        return false;
+    }
+
+    private bool CanManageLocalSaveLibrary(string actionName)
+    {
+        if (_sessionState.SessionRole == SessionRole.Offline
+            && _sessionState.ConnectionStatus is not ConnectionStatus.Connecting)
+        {
+            return true;
+        }
+
+        string message = _sessionState.ConnectionStatus == ConnectionStatus.Connecting
+            ? $"{actionName} ist waehrend des Verbindungsaufbaus gesperrt."
+            : $"{actionName} ist nur im Offline-Menue verfuegbar, damit Save-Bibliothek und Multiplayer-Lobby getrennt bleiben.";
+
+        GD.PrintErr($"[Main] {message}");
+        _mainMenu.SetSessionState(
+            _sessionState.SessionRole,
+            _sessionState.ConnectionStatus,
+            message,
+            _sessionState.ConnectedPeerIds,
+            _sessionState.LocalPeerId);
+        return false;
+    }
+
+    private bool CanPersistOfflineSave() =>
+        _sessionState.SessionRole == SessionRole.Offline
+        && _sessionState.ConnectionStatus is not ConnectionStatus.Connecting;
+
+    private bool CanChangePauseStateLocally()
+    {
+        if (_multiplayerSession.Role != SessionRole.Client)
+        {
+            return true;
+        }
+
+        GD.Print("[Main] Pause ist im Multiplayer nur fuer den Host autoritativ.");
+        return false;
+    }
 
     private Cell ResolveStartCell(global::Maze.Model.Maze maze) =>
         ResolveSessionPoint(maze, _sessionState.StartCell, 0, 0);
 
+    private Cell ResolveLocalSpawnCell(Cell fallbackStartCell)
+    {
+        if (_currentMaze is null)
+        {
+            return fallbackStartCell;
+        }
+
+        if (!_playerIdentities.TryGetValue(LocalSessionPlayerId, out PlayerIdentity? playerIdentity))
+        {
+            CachePlayerIdentities(BuildSessionPlayerIdentities(_currentMaze), clearMissing: false);
+            if (!_playerIdentities.TryGetValue(LocalSessionPlayerId, out playerIdentity))
+            {
+                return fallbackStartCell;
+            }
+        }
+
+        MazePointSaveData assignedSpawnCell = playerIdentity.AssignedSpawnCell;
+        return _currentMaze.IsInside(assignedSpawnCell.X, assignedSpawnCell.Y)
+            ? _currentMaze.GetCell(assignedSpawnCell.X, assignedSpawnCell.Y)
+            : fallbackStartCell;
+    }
+
+    private Cell ResolveSpawnCellForPeer(long peerId, Cell fallbackStartCell)
+    {
+        if (_currentMaze is null)
+        {
+            return fallbackStartCell;
+        }
+
+        if (!_playerIdentities.TryGetValue(peerId, out PlayerIdentity? playerIdentity))
+        {
+            return fallbackStartCell;
+        }
+
+        MazePointSaveData assignedSpawnCell = playerIdentity.AssignedSpawnCell;
+        return _currentMaze.IsInside(assignedSpawnCell.X, assignedSpawnCell.Y)
+            ? _currentMaze.GetCell(assignedSpawnCell.X, assignedSpawnCell.Y)
+            : fallbackStartCell;
+    }
+
+    private void SynchronizeLateJoinClient()
+    {
+        BroadcastSessionStartIfHosting("Spaeter beigetretener Client wird mit dem aktuellen Lauf synchronisiert.");
+    }
+
     private Cell ResolveGoalCell(global::Maze.Model.Maze maze) =>
         ResolveSessionPoint(maze, _sessionState.GoalCell, maze.Width - 1, maze.Height - 1);
+
+    private void ApplyLocalSessionStartSnapshot(PlayerSnapshot playerSnapshot)
+    {
+        ApplyLocalPlayerSnapshot(playerSnapshot, updateVisitedMap: true);
+    }
+
+    private void ApplyLocalPlayerSnapshot(PlayerSnapshot playerSnapshot, bool updateVisitedMap)
+    {
+        if (_currentMaze is null)
+        {
+            return;
+        }
+
+        PlayerRuntimeState runtimeState = playerSnapshot.RuntimeState;
+        _sessionState.GoalReached = runtimeState.GoalReached;
+        _sessionState.IsPlayerAlive = runtimeState.IsAlive;
+        _sessionState.IsManualMode = runtimeState.IsManualMode;
+        _isManualMode = runtimeState.IsManualMode;
+
+        if (!runtimeState.IsManualMode)
+        {
+            _player.DisableManualMode();
+            _hud.SetStaminaVisible(false);
+            ClearLocalPerceptionState();
+            _hud.SetLocalStatus(runtimeState.GoalReached ? "Ziel erreicht." : string.Empty);
+            ApplyPlayerCameraMode();
+            SyncMonsterPlayerTargets();
+            return;
+        }
+
+        Cell defaultStartCell = ResolveStartCell(_currentMaze);
+        Cell localSpawnCell = ResolveSavePoint(_currentMaze, runtimeState.CurrentCell, defaultStartCell.X, defaultStartCell.Y);
+        Cell goalCell = ResolveGoalCell(_currentMaze);
+        _player.EnableManualMode(_currentMaze, localSpawnCell, goalCell, _view3D.CellSize, _camera3D, PlayerCharacter3D.ControlAuthority.LocalInput);
+        _player.ApplyLocalManualRuntimeState(runtimeState);
+
+        Vector2I playerCell = runtimeState.CurrentCell.ToVector2I();
+        _audioController.UpdatePlayerCell(playerCell);
+        _audioController.SetPlayerStamina(runtimeState.CurrentStamina, runtimeState.MaximumStamina, runtimeState.IsSprinting);
+        SyncMonsterPlayerTargets();
+        ApplyLocalPerceptionState(playerCell, updateVisitedMap);
+        _hud.SetStaminaVisible(true);
+        _hud.SetLocalStatus(runtimeState.GoalReached ? "Ziel erreicht." : string.Empty);
+        _hud.SetStamina(runtimeState.CurrentStamina, runtimeState.MaximumStamina, runtimeState.IsSprinting);
+        ApplyPlayerCameraMode();
+    }
 
     private static Cell ResolveSessionPoint(global::Maze.Model.Maze maze, Cell? sessionCell, int fallbackX, int fallbackY)
     {
@@ -1157,6 +2309,22 @@ public partial class Main : Node
         return cells;
     }
 
+    private static IEnumerable<Vector2I> ConvertTrapCells(IEnumerable<MazePointSaveData> trapCells)
+    {
+        foreach (MazePointSaveData trapCell in trapCells)
+        {
+            yield return trapCell.ToVector2I();
+        }
+    }
+
+    private static IEnumerable<Vector2I> ConvertMazePoints(IEnumerable<MazePointSaveData> points)
+    {
+        foreach (MazePointSaveData point in points)
+        {
+            yield return point.ToVector2I();
+        }
+    }
+
     private static List<Vector2I> ConvertMonsterCells(MazeSaveData saveData)
     {
         List<Vector2I> cells = new(saveData.MonsterSpawnCells.Count);
@@ -1239,6 +2407,7 @@ public partial class Main : Node
         }
 
         _player.SetProcess(gameplayInputEnabled);
+        _view3D.SetRemotePlayerProcessing(gameplayInputEnabled && _view3D.Visible);
         _camera3D.SetProcess(gameplayInputEnabled && _view3D.Visible);
         _camera3D.SetProcessUnhandledInput(gameplayInputEnabled && _view3D.Visible);
         _runner.IsPaused = _flowState is GameFlowState.Boot or GameFlowState.MainMenu or GameFlowState.Paused;
@@ -1262,15 +2431,46 @@ public partial class Main : Node
         _audioController.SetGameplayState(showGameplay && _view3D.Visible, gameplayInputEnabled && _isManualMode && _view3D.Visible);
     }
 
+    private void SyncKnownTrapCells(bool resetToCurrentState)
+    {
+        if (resetToCurrentState)
+        {
+            _knownActiveTrapCells.Clear();
+            foreach (Vector2I trapCell in _sessionState.ActiveTrapCells)
+            {
+                _knownActiveTrapCells.Add(trapCell);
+            }
+
+            return;
+        }
+
+        HashSet<Vector2I> currentActiveTrapCells = new(_sessionState.ActiveTrapCells);
+        foreach (Vector2I previousTrapCell in _knownActiveTrapCells)
+        {
+            if (!currentActiveTrapCells.Contains(previousTrapCell))
+            {
+                _audioController.NotifyTrapTriggeredNearLocalPlayer(previousTrapCell);
+            }
+        }
+
+        _knownActiveTrapCells.Clear();
+        foreach (Vector2I trapCell in currentActiveTrapCells)
+        {
+            _knownActiveTrapCells.Add(trapCell);
+        }
+    }
+
     private void ConfigureDayNightCycle(MazeGameConfig config)
     {
         _dayNightController.Configure(config.DayNightCycleEnabled, _sessionState.DayNightProgress);
-        _dayNightController.SetPaused(_flowState != GameFlowState.Playing);
+        _dayNightController.SetPaused(!IsAuthoritativeWorldHost() || _flowState != GameFlowState.Playing);
     }
 
     private void ConfigureTrapSystem()
     {
+        _trapManager.SetAuthoritativeConsumptionEnabled(IsAuthoritativeWorldHost());
         _trapManager.Configure(_currentGameConfig, _currentMaze, _sessionState.TrapDefinitions, _view3D.CellSize);
+        SyncKnownTrapCells(resetToCurrentState: true);
         SyncTrapState();
     }
 
@@ -1278,6 +2478,7 @@ public partial class Main : Node
     {
         _trapManager.Clear();
         _sessionState.ActiveTrapCells.Clear();
+        _knownActiveTrapCells.Clear();
 
         if (clearDefinitions)
         {
@@ -1293,15 +2494,15 @@ public partial class Main : Node
 
     private void SyncTrapState()
     {
-        HashSet<Vector2I> activeTrapCells = new(_trapManager.ActiveTrapCells);
-
-        _sessionState.ActiveTrapCells.Clear();
-        _sessionState.ActiveTrapCells.AddRange(activeTrapCells);
-
-        foreach (TrapDefinition trap in _sessionState.TrapDefinitions)
+        if (IsAuthoritativeWorldHost())
         {
-            trap.IsArmed = activeTrapCells.Contains(trap.Cell);
+            ApplyTrapCellsToSessionState(_trapManager.ActiveTrapCells);
+            SyncKnownTrapCells(resetToCurrentState: false);
+            return;
         }
+
+        _trapManager.ApplyActiveTrapCells(_sessionState.ActiveTrapCells);
+        SyncKnownTrapCells(resetToCurrentState: false);
     }
 
     private void ConfigureMonsterSystem() =>
@@ -1313,24 +2514,64 @@ public partial class Main : Node
         {
             _monsterManager.Synchronize(MonsterSimulationMode.Inactive);
             _sessionState.ActiveMonsterCells.Clear();
-            _view3D.SetMonsterCells(Array.Empty<Vector2I>());
-            _audioController.SetMonsterCells(Array.Empty<Vector2I>());
+            SyncMonsterVisualState();
             _view3D.ApplyDayNightState(false, false, MazeGameConfig.DefaultNightViewDistance, 0f, false);
             return;
         }
 
-        _sessionState.DayNightProgress = _dayNightController.TimeOfDay;
-        _monsterManager.Synchronize(GetMonsterSimulationMode());
-        _sessionState.ActiveMonsterCells.Clear();
-        _sessionState.ActiveMonsterCells.AddRange(_monsterManager.ActiveMonsterCells);
-        _view3D.SetMonsterCells(_sessionState.ActiveMonsterCells);
-        _audioController.SetMonsterCells(_sessionState.ActiveMonsterCells);
+        if (IsAuthoritativeWorldHost())
+        {
+            _sessionState.DayNightProgress = _dayNightController.TimeOfDay;
+        }
+        else
+        {
+            _dayNightController.SetPaused(true);
+            _dayNightController.ApplySynchronizedTimeOfDay(_sessionState.DayNightProgress, emitSignals: false);
+        }
+
+        _monsterManager.Synchronize(IsAuthoritativeWorldHost() ? GetMonsterSimulationMode() : MonsterSimulationMode.Inactive);
+
+        if (IsAuthoritativeWorldHost())
+        {
+            _sessionState.ActiveMonsterCells.Clear();
+            _sessionState.ActiveMonsterCells.AddRange(_monsterManager.ActiveMonsterCells);
+        }
+
+        SyncMonsterVisualState();
         _view3D.ApplyDayNightState(
             _currentGameConfig.DayNightCycleEnabled,
             _currentGameConfig.DarkModeEnabled,
             _currentGameConfig.NightViewDistance,
             _sessionState.DayNightProgress,
             _dayNightController.IsNight);
+    }
+
+    private bool IsAuthoritativeWorldHost() =>
+        _multiplayerSession.Role != SessionRole.Client;
+
+    private void ApplyMonsterCellsToSessionState(IEnumerable<Vector2I> activeMonsterCells)
+    {
+        HashSet<Vector2I> activeCells = new(activeMonsterCells);
+        _sessionState.ActiveMonsterCells.Clear();
+        _sessionState.ActiveMonsterCells.AddRange(activeCells);
+    }
+
+    private void SyncMonsterVisualState()
+    {
+        _view3D.SetMonsterCells(_sessionState.ActiveMonsterCells);
+        _audioController.SetMonsterCells(_sessionState.ActiveMonsterCells);
+    }
+
+    private void ApplyTrapCellsToSessionState(IEnumerable<Vector2I> activeTrapCells)
+    {
+        HashSet<Vector2I> activeCells = new(activeTrapCells);
+        _sessionState.ActiveTrapCells.Clear();
+        _sessionState.ActiveTrapCells.AddRange(activeCells);
+
+        foreach (TrapDefinition trap in _sessionState.TrapDefinitions)
+        {
+            trap.IsArmed = activeCells.Contains(trap.Cell);
+        }
     }
 
     private void UpdateMonsterStunCollision()
@@ -1346,7 +2587,9 @@ public partial class Main : Node
 
         float collisionRadius = _view3D.CellSize * MonsterStunCollisionRadiusFactor;
 
-        if (_isManualMode && _monsterManager.TryCatchPlayerInRadius(_player.GlobalPosition, collisionRadius))
+        if (IsAuthoritativeWorldHost()
+            && _isManualMode
+            && _monsterManager.TryCatchPlayerInRadius(LocalSessionPlayerId, _player.GlobalPosition, collisionRadius))
         {
             _monsterManager.UpdateStunCollision(Vector3.Zero, 0f);
             return;
